@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical RAG Chatbot</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🏥 Medical Information Assistant</h1>
+            <p class="subtitle">Ask about hospitals, doctors, and specialties</p>
+        </header>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="welcome-message">
+                <div class="icon">💬</div>
+                <h2>Welcome!</h2>
+                <p>Ask me anything about:</p>
+                <ul>
+                    <li>Hospitals and medical facilities</li>
+                    <li>Doctors and specialists</li>
+                    <li>Medical specialties</li>
+                    <li>Doctor-hospital relationships</li>
+                </ul>
+                <p class="hint">Try: "Which doctors work at German Hospital?" or "أعطني معلومات عن مستشفى عين شمس"</p>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <form id="chatForm">
+                <input type="text" id="userInput" placeholder="Type your question here... (English or Arabic)"
+                    autocomplete="off" dir="auto" />
+                <button type="submit" id="sendBtn">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+                    </svg>
+                </button>
+            </form>
+            <div class="status" id="status">Ready</div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

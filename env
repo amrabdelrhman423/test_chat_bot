@@ -1,0 +1,28 @@
+# === MONGODB ATLAS ===
+MONGO_URI="mongodb+srv://dowaj16087_db_user:Z6PJlofNvWDkqkUE@test-trav.0stlhcs.mongodb.net/sample_mflix?retryWrites=true&w=majority"
+
+# === EMBEDDINGS (FREE LOCAL MODEL) ===
+EMBEDDING_PROVIDER=local
+
+# If using local embeddings no OLLAMA needed:
+# Update these lines for local setup:
+OLLAMA_URL=http://localhost:11434
+OLLAMA_API_KEY=
+
+# === QDRANT CLOUD ===
+# QDRANT_URL=https://a95fd4ec-871f-4d5c-96ad-2229278157f8.eu-west-2-0.aws.cloud.qdrant.io
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.m-cJvv_HN5MprfKo0AJGpX83Tw5V68Q_wPlW_G7gvIY
+
+QDRANT_COLLECTION=parse_docs
+# .env file fix
+VECTOR_SIZE=768
+# nomic-embed-text returns 1024 (check model docs); adjust if different
+DRY_RUN=false
+PORT=3000
+# QDRANT_URL=https://4cf15a0d-3480-4bfa-a596-4a5f8e6020f5.us-west-1-0.aws.cloud.qdrant.io
+# QDRANT_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.k4GKqgbUJy91eKQfmCWJo9VZ0DbdDHtRJFrViP8HBkY
+
+NODE_TLS_REJECT_UNAUTHORIZED=0
+# Migration testing
+DRY_RUN=false

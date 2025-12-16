@@ -1,0 +1,3470 @@
+[
+  {
+    "className": "_User",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "username": {
+        "type": "String"
+      },
+      "password": {
+        "type": "String"
+      },
+      "email": {
+        "type": "String"
+      },
+      "emailVerified": {
+        "type": "Boolean"
+      },
+      "authData": {
+        "type": "Object"
+      },
+      "profileUrl": {
+        "type": "String"
+      },
+      "phone": {
+        "type": "String"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "type": {
+        "type": "String"
+      },
+      "resetDate": {
+        "type": "Date"
+      },
+      "firstName": {
+        "type": "String"
+      },
+      "lastName": {
+        "type": "String"
+      },
+      "stripeCustomerId": {
+        "type": "String",
+        "required": false
+      },
+      "lastAutoId": {
+        "type": "String"
+      },
+      "deviceId": {
+        "type": "String"
+      },
+      "autoId": {
+        "type": "Number",
+        "required": false
+      },
+      "fullname": {
+        "type": "String"
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "count": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "get": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "create": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "update": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "delete": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": [
+          "email"
+        ]
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "email_1": {
+        "email": 1
+      },
+      "username_1": {
+        "username": 1
+      },
+      "case_insensitive_username": {
+        "username": 1
+      },
+      "case_insensitive_email": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "className": "_Role",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "name": {
+        "type": "String"
+      },
+      "users": {
+        "type": "Relation",
+        "targetClass": "_User"
+      },
+      "roles": {
+        "type": "Relation",
+        "targetClass": "_Role"
+      },
+      "serviceType": {
+        "type": "String"
+      },
+      "serviceId": {
+        "type": "String"
+      },
+      "serviceName": {
+        "type": "String"
+      },
+      "branchId": {
+        "type": "String"
+      },
+      "lockStatus": {
+        "type": "Boolean"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "*": true
+      },
+      "count": {},
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "name_1": {
+        "name": 1
+      }
+    }
+  },
+  {
+    "className": "ChatRooms",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "chatId": {
+        "type": "String"
+      },
+      "createdBy": {
+        "type": "String"
+      },
+      "isGroup": {
+        "type": "Boolean"
+      },
+      "name": {
+        "type": "String"
+      },
+      "picture": {
+        "type": "String"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "nameChangedBy": {
+        "type": "String"
+      },
+      "pictureChangedBy": {
+        "type": "String"
+      },
+      "serviceRoleObjectId": {
+        "type": "String"
+      },
+      "sessionStatus": {
+        "type": "String"
+      },
+      "chatRoomDetailsRelation": {
+        "type": "Relation",
+        "targetClass": "ChatRoomDetails"
+      },
+      "chatRoomName": {
+        "type": "String"
+      },
+      "blocked": {
+        "type": "Number"
+      },
+      "langAgent": {
+        "type": "String"
+      },
+      "langClient": {
+        "type": "String"
+      },
+      "reset": {
+        "type": "Boolean"
+      },
+      "udid": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String",
+        "required": false,
+        "defaultValue": "new"
+      },
+      "currentAdmin": {
+        "type": "String",
+        "required": false
+      },
+      "lastMsgId": {
+        "type": "String",
+        "required": false
+      },
+      "lastMsgAt": {
+        "type": "Date",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "role:admin": true,
+        "*": true
+      },
+      "count": {},
+      "get": {
+        "role:admin": true,
+        "*": true
+      },
+      "create": {
+        "role:admin": true,
+        "*": true
+      },
+      "update": {
+        "role:admin": true,
+        "*": true
+      },
+      "delete": {
+        "role:admin": true,
+        "*": true
+      },
+      "addField": {
+        "role:admin": true,
+        "*": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "chatId_1": {
+        "chatId": 1
+      },
+      "chatId_hashed": {
+        "chatId": "hashed"
+      },
+      "chatId_1__rperm_1": {
+        "chatId": 1,
+        "_rperm": 1
+      }
+    }
+  },
+  {
+    "className": "_Installation",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "installationId": {
+        "type": "String"
+      },
+      "deviceToken": {
+        "type": "String"
+      },
+      "channels": {
+        "type": "Array"
+      },
+      "deviceType": {
+        "type": "String"
+      },
+      "pushType": {
+        "type": "String"
+      },
+      "GCMSenderId": {
+        "type": "String"
+      },
+      "timeZone": {
+        "type": "String"
+      },
+      "localeIdentifier": {
+        "type": "String"
+      },
+      "badge": {
+        "type": "Number"
+      },
+      "appVersion": {
+        "type": "String"
+      },
+      "appName": {
+        "type": "String"
+      },
+      "appIdentifier": {
+        "type": "String"
+      },
+      "parseVersion": {
+        "type": "String"
+      },
+      "user": {
+        "type": "String"
+      },
+      "Ahly": {
+        "type": "Array"
+      },
+      "username": {
+        "type": "String"
+      },
+      "com": {
+        "type": "Object"
+      },
+      "voipDeviceToken": {
+        "type": "String",
+        "required": false
+      },
+      "deviceId": {
+        "type": "String"
+      }
+    },
+    "classLevelPermissions": {
+      "find": {},
+      "count": {},
+      "get": {},
+      "create": {},
+      "update": {},
+      "delete": {},
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "ChatRoomDetails",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "chatId": {
+        "type": "String"
+      },
+      "isAdmin": {
+        "type": "Boolean"
+      },
+      "isLeave": {
+        "type": "Boolean"
+      },
+      "isRecording": {
+        "type": "Boolean"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "userId": {
+        "type": "String"
+      },
+      "userPhone": {
+        "type": "String"
+      },
+      "removedBy": {
+        "type": "String"
+      },
+      "addedBy": {
+        "type": "String"
+      },
+      "mutedUntil": {
+        "type": "Number"
+      },
+      "originalMember": {
+        "type": "Boolean"
+      },
+      "lastChatId": {
+        "type": "String"
+      },
+      "agentName": {
+        "type": "String"
+      },
+      "reset": {
+        "type": "Boolean"
+      },
+      "resetDate": {
+        "type": "Date"
+      },
+      "isTyping": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "type": {
+        "type": "String",
+        "required": false
+      },
+      "currentAdmin": {
+        "type": "String"
+      },
+      "userDoctor": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      },
+      "userPatient": {
+        "type": "Pointer",
+        "targetClass": "Patients",
+        "required": false
+      },
+      "userAdmin": {
+        "type": "Pointer",
+        "targetClass": "AdminProfile",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "role:admin": true,
+        "*": true
+      },
+      "count": {},
+      "get": {
+        "role:admin": true,
+        "*": true
+      },
+      "create": {
+        "role:admin": true,
+        "*": true
+      },
+      "update": {
+        "role:admin": true,
+        "*": true
+      },
+      "delete": {
+        "role:admin": true,
+        "*": true
+      },
+      "addField": {
+        "role:admin": true,
+        "*": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "chatId_1_userId_1": {
+        "chatId": 1,
+        "userId": 1
+      },
+      "_id_hashed": {
+        "_id": "hashed"
+      },
+      "chatId_1__rperm_1": {
+        "chatId": 1,
+        "_rperm": 1
+      }
+    }
+  },
+  {
+    "className": "UserStatusMessage",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "chatId": {
+        "type": "String"
+      },
+      "deliveredDate": {
+        "type": "Date"
+      },
+      "messageId": {
+        "type": "String"
+      },
+      "readDate": {
+        "type": "Date"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "userId": {
+        "type": "String"
+      },
+      "pushed": {
+        "type": "Boolean"
+      },
+      "sessionToken": {
+        "type": "String"
+      },
+      "deviceId": {
+        "type": "String",
+        "required": false
+      },
+      "autoId": {
+        "type": "Number",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "role:admin": true,
+        "*": true
+      },
+      "count": {},
+      "get": {
+        "role:admin": true,
+        "*": true
+      },
+      "create": {
+        "role:admin": true,
+        "*": true
+      },
+      "update": {
+        "role:admin": true,
+        "*": true
+      },
+      "delete": {
+        "role:admin": true,
+        "*": true
+      },
+      "addField": {
+        "role:admin": true,
+        "*": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "chatId_1_messageId_1_userId_1": {
+        "chatId": 1,
+        "messageId": 1,
+        "userId": 1
+      }
+    }
+  },
+  {
+    "className": "Messages",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "chatId": {
+        "type": "String"
+      },
+      "duration": {
+        "type": "Number"
+      },
+      "extention": {
+        "type": "String"
+      },
+      "fileSize": {
+        "type": "Number"
+      },
+      "location": {
+        "type": "GeoPoint"
+      },
+      "pictureHeight": {
+        "type": "Number"
+      },
+      "pictureWidth": {
+        "type": "Number"
+      },
+      "senderId": {
+        "type": "String"
+      },
+      "SHA": {
+        "type": "String"
+      },
+      "status": {
+        "type": "Number"
+      },
+      "text": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "fileUrl": {
+        "type": "String"
+      },
+      "fileObject": {
+        "type": "File"
+      },
+      "fileData": {
+        "type": "File"
+      },
+      "role": {
+        "type": "String"
+      },
+      "serviceId": {
+        "type": "String"
+      },
+      "MessageReply": {
+        "type": "Object"
+      },
+      "Thumbnail_reply": {
+        "type": "File"
+      },
+      "contactsDetail": {
+        "type": "Array"
+      },
+      "location2": {
+        "type": "String"
+      },
+      "contactsDetail2": {
+        "type": "String"
+      },
+      "MessageReply2": {
+        "type": "String"
+      },
+      "urlContent": {
+        "type": "String"
+      },
+      "expiresAt": {
+        "type": "Date"
+      },
+      "expireAt": {
+        "type": "Date"
+      },
+      "lastResetDate": {
+        "type": "String"
+      },
+      "extension": {
+        "type": "String"
+      },
+      "autoId": {
+        "type": "Number",
+        "required": false
+      },
+      "deviceId": {
+        "type": "String",
+        "required": false
+      },
+      "reactions": {
+        "type": "Array",
+        "required": false
+      },
+      "reactionCounts": {
+        "type": "Object",
+        "required": false
+      },
+      "thumbnail": {
+        "type": "String"
+      },
+      "filePath": {
+        "type": "String"
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "role:admin": true,
+        "requiresAuthentication": true,
+        "*": true
+      },
+      "count": {
+        "requiresAuthentication": true,
+        "*": true
+      },
+      "get": {
+        "role:admin": true,
+        "requiresAuthentication": true,
+        "*": true
+      },
+      "create": {
+        "role:admin": true,
+        "requiresAuthentication": true
+      },
+      "update": {
+        "role:admin": true,
+        "requiresAuthentication": true
+      },
+      "delete": {
+        "role:admin": true,
+        "requiresAuthentication": true
+      },
+      "addField": {
+        "role:admin": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "_id_hashed": {
+        "_id": "hashed"
+      },
+      "chatId_1__rperm_1": {
+        "chatId": 1,
+        "_rperm": 1
+      },
+      "type_text": {
+        "type": "text"
+      }
+    }
+  },
+  {
+    "className": "_Session",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "user": {
+        "type": "Pointer",
+        "targetClass": "_User"
+      },
+      "installationId": {
+        "type": "String"
+      },
+      "sessionToken": {
+        "type": "String"
+      },
+      "expiresAt": {
+        "type": "Date"
+      },
+      "createdWith": {
+        "type": "Object"
+      },
+      "restricted": {
+        "type": "Boolean"
+      },
+      "mode": {
+        "type": "Boolean"
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "*": true
+      },
+      "count": {},
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "userStatus",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "lastSeen": {
+        "type": "Date"
+      },
+      "mobileStatus": {
+        "type": "Number"
+      },
+      "webStatus": {
+        "type": "Number"
+      },
+      "userId": {
+        "type": "String"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Patients",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "uid": {
+        "type": "String"
+      },
+      "gender": {
+        "type": "String"
+      },
+      "nationality": {
+        "type": "String"
+      },
+      "bloodType": {
+        "type": "String"
+      },
+      "heartRate": {
+        "type": "String"
+      },
+      "bloodPressure": {
+        "type": "String"
+      },
+      "glucoseLevel": {
+        "type": "String"
+      },
+      "allergies": {
+        "type": "String"
+      },
+      "medications": {
+        "type": "String"
+      },
+      "profileUrl": {
+        "type": "String",
+        "required": false
+      },
+      "dateOfBirth": {
+        "type": "Date",
+        "required": false
+      },
+      "fullname": {
+        "type": "String",
+        "required": false
+      },
+      "email": {
+        "type": "String",
+        "required": false
+      },
+      "phonenumber": {
+        "type": "String",
+        "required": false
+      },
+      "preExistingConditions": {
+        "type": "String",
+        "required": false
+      },
+      "countryOfResidence": {
+        "type": "String",
+        "required": false
+      },
+      "cityOfResidence": {
+        "type": "String",
+        "required": false
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "address": {
+        "type": "String",
+        "required": false
+      },
+      "weight": {
+        "type": "Number",
+        "required": false,
+        "defaultValue": 0
+      },
+      "height": {
+        "type": "Number",
+        "required": false,
+        "defaultValue": 0
+      },
+      "documentUrl": {
+        "type": "String"
+      },
+      "isPregnant": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "count": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "get": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "create": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "update": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "fullname_text": {
+        "fullname": "text"
+      }
+    }
+  },
+  {
+    "className": "PatientFamilyMembers",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "patientUid": {
+        "type": "String"
+      },
+      "relation": {
+        "type": "String"
+      },
+      "gender": {
+        "type": "String"
+      },
+      "dateOfBirth": {
+        "type": "Date",
+        "required": false
+      },
+      "fullname": {
+        "type": "String",
+        "required": false
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Doctors",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "uid": {
+        "type": "String"
+      },
+      "title": {
+        "type": "String"
+      },
+      "positionEn": {
+        "type": "String"
+      },
+      "positionAr": {
+        "type": "String"
+      },
+      "qualificationsEn": {
+        "type": "String"
+      },
+      "qualificationsAr": {
+        "type": "String"
+      },
+      "yrsExp": {
+        "type": "Number"
+      },
+      "facebookUrl": {
+        "type": "String"
+      },
+      "instagramUrl": {
+        "type": "String"
+      },
+      "linkedinUrl": {
+        "type": "String"
+      },
+      "gender": {
+        "type": "String"
+      },
+      "profileUrl": {
+        "type": "String",
+        "required": false
+      },
+      "fullname": {
+        "type": "String",
+        "required": false
+      },
+      "averageRating": {
+        "type": "Number",
+        "required": false,
+        "defaultValue": 0
+      },
+      "fullnameAr": {
+        "type": "String",
+        "required": false
+      },
+      "email": {
+        "type": "String",
+        "required": false
+      },
+      "phonenumber": {
+        "type": "String",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "rank": {
+        "type": "Number",
+        "required": false,
+        "defaultValue": 0
+      }
+    },
+    "classLevelPermissions": {
+      "find": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "count": {
+        "requiresAuthentication": true
+      },
+      "get": {
+        "*": true,
+        "requiresAuthentication": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {}
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Hospitals",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "uid": {
+        "type": "String"
+      },
+      "nameEn": {
+        "type": "String"
+      },
+      "nameAr": {
+        "type": "String"
+      },
+      "hospitalType": {
+        "type": "String"
+      },
+      "descEn": {
+        "type": "String"
+      },
+      "descAr": {
+        "type": "String"
+      },
+      "addressEn": {
+        "type": "String"
+      },
+      "addressAr": {
+        "type": "String"
+      },
+      "workingDaysHrs": {
+        "type": "Number"
+      },
+      "portfolioFileUrl": {
+        "type": "String"
+      },
+      "facebookUrl": {
+        "type": "String"
+      },
+      "instagramUrl": {
+        "type": "String"
+      },
+      "linkedinUrl": {
+        "type": "String"
+      },
+      "longitude": {
+        "type": "Number"
+      },
+      "latitude": {
+        "type": "Number"
+      },
+      "areaId": {
+        "type": "String",
+        "required": false
+      },
+      "profileUrl": {
+        "type": "String",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "rank": {
+        "type": "Number",
+        "required": false,
+        "defaultValue": 0
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "HospitalDoctorSpecialty",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "hospitalUid": {
+        "type": "String"
+      },
+      "doctorUid": {
+        "type": "String"
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "doctorDetails": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      },
+      "hospitalDetails": {
+        "type": "Pointer",
+        "targetClass": "Hospitals",
+        "required": false
+      },
+      "specialtyUid": {
+        "type": "String"
+      },
+      "specialtyDetails": {
+        "type": "Pointer",
+        "targetClass": "Specialties",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "DoctorAppointments",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "hospitalUid": {
+        "type": "String"
+      },
+      "timeSlots": {
+        "type": "Array"
+      },
+      "sessionDuration": {
+        "type": "Number"
+      },
+      "every": {
+        "type": "String"
+      },
+      "doctorUid": {
+        "type": "String"
+      },
+      "startDate": {
+        "type": "Date",
+        "required": false
+      },
+      "day": {
+        "type": "String",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "hospitalDetails": {
+        "type": "Pointer",
+        "targetClass": "Hospitals",
+        "required": false
+      },
+      "doctorDetails": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      },
+      "isOnline": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "price": {
+        "type": "Number",
+        "required": false
+      },
+      "currency": {
+        "type": "String",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "PatientsBookings",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "patientUid": {
+        "type": "String"
+      },
+      "doctorUid": {
+        "type": "String"
+      },
+      "hospitalUid": {
+        "type": "String"
+      },
+      "bookingDate": {
+        "type": "Date"
+      },
+      "slot": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "cancelledBy": {
+        "type": "String",
+        "required": false,
+        "defaultValue": "\"\""
+      },
+      "isReviewed": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "doctorDetails": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      },
+      "patientDetails": {
+        "type": "Pointer",
+        "targetClass": "Patients",
+        "required": false
+      },
+      "hospitalDetails": {
+        "type": "Pointer",
+        "targetClass": "Hospitals",
+        "required": false
+      },
+      "isOnline": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "isVideoLinkGenerated": {
+        "type": "Boolean",
+        "required": false
+      },
+      "packageUid": {
+        "type": "String",
+        "required": false
+      },
+      "currency": {
+        "type": "String",
+        "required": false
+      },
+      "packageDetails": {
+        "type": "Pointer",
+        "targetClass": "Packages",
+        "required": false
+      },
+      "isPackage": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "sessionType": {
+        "type": "String",
+        "required": false
+      },
+      "sessionIndex": {
+        "type": "Number",
+        "required": false
+      },
+      "price": {
+        "type": "Number",
+        "required": false
+      },
+      "paid": {
+        "type": "Number",
+        "required": false
+      },
+      "packageInstanceUid": {
+        "type": "String"
+      },
+      "endAt": {
+        "type": "Date"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "bookingDate_1_doctorUid_1_hospitalUid_1_slot_1_status_1": {
+        "bookingDate": 1,
+        "doctorUid": 1,
+        "hospitalUid": 1,
+        "slot": 1,
+        "status": 1
+      }
+    }
+  },
+  {
+    "className": "RolesChatRooms",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "name": {
+        "type": "String"
+      },
+      "roles": {
+        "type": "Relation",
+        "targetClass": "RolesChatRooms"
+      },
+      "users": {
+        "type": "Relation",
+        "targetClass": "_User"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "_id_hashed": {
+        "_id": "hashed"
+      }
+    }
+  },
+  {
+    "className": "VideoRoomDetails",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "state": {
+        "type": "String"
+      },
+      "userId": {
+        "type": "String"
+      },
+      "isAdmin": {
+        "type": "Boolean"
+      },
+      "videoId": {
+        "type": "String"
+      },
+      "userPhone": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String"
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "muted": {
+        "type": "Boolean"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "videoId_1_userId_1": {
+        "videoId": 1,
+        "userId": 1
+      },
+      "_id_hashed": {
+        "_id": "hashed"
+      },
+      "videoId_1__rperm_1": {
+        "videoId": 1,
+        "_rperm": 1
+      }
+    }
+  },
+  {
+    "className": "VideoRooms",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "videoId": {
+        "type": "String"
+      },
+      "state": {
+        "type": "String"
+      },
+      "jwt": {
+        "type": "String",
+        "required": false
+      },
+      "appointmentId": {
+        "type": "String",
+        "required": false
+      },
+      "appointmentDetails": {
+        "type": "Pointer",
+        "targetClass": "PatientsBookings",
+        "required": false
+      },
+      "jwtPatient": {
+        "type": "String",
+        "required": false
+      },
+      "jwtDoctor": {
+        "type": "String",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "videoId_1": {
+        "videoId": 1
+      },
+      "videoId_hashed": {
+        "videoId": "hashed"
+      },
+      "videoId_1__rperm_1": {
+        "videoId": 1,
+        "_rperm": 1
+      }
+    }
+  },
+  {
+    "className": "UserDocuments",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "uid": {
+        "type": "String",
+        "required": false
+      },
+      "documentUrl": {
+        "type": "String",
+        "required": false
+      },
+      "documentName": {
+        "type": "String",
+        "required": true
+      },
+      "appointmentId": {
+        "type": "String",
+        "required": false,
+        "defaultValue": ""
+      },
+      "uploaderType": {
+        "type": "String",
+        "required": false
+      },
+      "doctorDetails": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Cities",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "nameEn": {
+        "type": "String",
+        "required": true
+      },
+      "nameAr": {
+        "type": "String",
+        "required": true
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "nameAr8": {
+        "type": "String"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Areas",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "nameEn": {
+        "type": "String",
+        "required": true
+      },
+      "nameAr": {
+        "type": "String",
+        "required": true
+      },
+      "cityId": {
+        "type": "String",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "DoctorsReviews",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "patientUid": {
+        "type": "String",
+        "required": false
+      },
+      "doctorUid": {
+        "type": "String",
+        "required": false
+      },
+      "review": {
+        "type": "String",
+        "required": false
+      },
+      "rating": {
+        "type": "Number",
+        "required": false
+      },
+      "patientFullName": {
+        "type": "String",
+        "required": true
+      },
+      "patientProfileUrl": {
+        "type": "String"
+      },
+      "appointmentUid": {
+        "type": "String",
+        "required": false
+      },
+      "hospitalUid": {
+        "type": "String",
+        "required": false
+      },
+      "isApproved": {
+        "type": "Boolean",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Specialties",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "nameEn": {
+        "type": "String"
+      },
+      "nameAr": {
+        "type": "String"
+      },
+      "imageUrl": {
+        "type": "String"
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "TravAdmins",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "name": {
+        "type": "String",
+        "required": false
+      },
+      "profileUrl": {
+        "type": "String",
+        "required": false
+      },
+      "uid": {
+        "type": "String",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "useMasterKey": {
+        "type": "Boolean"
+      },
+      "type": {
+        "type": "String",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Payments",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "patientBooking": {
+        "type": "Pointer",
+        "targetClass": "PatientsBookings",
+        "required": false
+      },
+      "amount": {
+        "type": "String",
+        "required": false
+      },
+      "paymentId": {
+        "type": "String",
+        "required": false
+      },
+      "paymentType": {
+        "type": "String",
+        "required": false
+      },
+      "stripeCustomerId": {
+        "type": "String",
+        "required": false
+      },
+      "paymentMethodId": {
+        "type": "String",
+        "required": false
+      },
+      "currency": {
+        "type": "String",
+        "required": false
+      },
+      "packageInstanceUid": {
+        "type": "String",
+        "required": false
+      },
+      "patientUid": {
+        "type": "String",
+        "required": false
+      },
+      "cardLast4": {
+        "type": "String",
+        "required": false
+      },
+      "cardBrand": {
+        "type": "String",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "DoctorRanks",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "doctor": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      },
+      "rankNumber": {
+        "type": "Number",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Packages",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "price": {
+        "type": "Number",
+        "required": false
+      },
+      "currency": {
+        "type": "String",
+        "required": false
+      },
+      "hospitalUid": {
+        "type": "String",
+        "required": false
+      },
+      "hospitalDetails": {
+        "type": "Pointer",
+        "targetClass": "Hospitals",
+        "required": false
+      },
+      "detailsEn": {
+        "type": "String",
+        "required": false
+      },
+      "detailsAr": {
+        "type": "String",
+        "required": false
+      },
+      "procedureEn": {
+        "type": "String",
+        "required": false
+      },
+      "procedureAr": {
+        "type": "String",
+        "required": false
+      },
+      "timeframeEn": {
+        "type": "String",
+        "required": false
+      },
+      "timeframeAr": {
+        "type": "String",
+        "required": false
+      },
+      "paymentPercentage": {
+        "type": "Number",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      },
+      "isAssigned": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "HospitalDoctorPackages",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "hospitalUid": {
+        "type": "String",
+        "required": false
+      },
+      "doctorUid": {
+        "type": "String",
+        "required": false
+      },
+      "packageUid": {
+        "type": "String",
+        "required": false
+      },
+      "hospitalDetails": {
+        "type": "Pointer",
+        "targetClass": "Hospitals",
+        "required": false
+      },
+      "doctorDetails": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      },
+      "packageDetails": {
+        "type": "Pointer",
+        "targetClass": "Packages",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "AdminProfile",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "user": {
+        "type": "Pointer",
+        "targetClass": "_User"
+      },
+      "isAdmin": {
+        "type": "Boolean"
+      },
+      "isSuperAdmin": {
+        "type": "Boolean"
+      },
+      "features": {
+        "type": "Array"
+      },
+      "scopeType": {
+        "type": "String"
+      },
+      "scopeHospitals": {
+        "type": "Array"
+      },
+      "scopeHospitalIds": {
+        "type": "Array",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean"
+      },
+      "uid": {
+        "type": "String"
+      },
+      "profileUrl": {
+        "type": "String"
+      },
+      "name": {
+        "type": "String"
+      },
+      "type": {
+        "type": "String",
+        "required": false
+      },
+      "roomType": {
+        "type": "String",
+        "required": false
+      },
+      "domain": {
+        "type": "String",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "by_user": {
+        "user": 1
+      }
+    }
+  },
+  {
+    "className": "AdminRole",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "name": {
+        "type": "String"
+      },
+      "features": {
+        "type": "Array"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "uniq_name": {
+        "name": 1
+      }
+    }
+  },
+  {
+    "className": "AdminUserRoles",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "user": {
+        "type": "Pointer",
+        "targetClass": "_User"
+      },
+      "role": {
+        "type": "Pointer",
+        "targetClass": "AdminRole"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "by_user": {
+        "user": 1
+      },
+      "by_role": {
+        "role": 1
+      },
+      "user_role_idx": {
+        "user": 1,
+        "role": 1
+      }
+    }
+  },
+  {
+    "className": "AdminType",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "key": {
+        "type": "String"
+      },
+      "label": {
+        "type": "String"
+      },
+      "domain": {
+        "type": "String"
+      },
+      "defaultScopeModel": {
+        "type": "String"
+      },
+      "requiredFeatures": {
+        "type": "Array"
+      },
+      "recommendedFeatures": {
+        "type": "Array"
+      },
+      "roomType": {
+        "type": "String"
+      },
+      "notes": {
+        "type": "String"
+      },
+      "active": {
+        "type": "Boolean"
+      },
+      "order": {
+        "type": "Number"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "uniq_key": {
+        "key": 1
+      }
+    }
+  },
+  {
+    "className": "AdminFeatureCatalog",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "key": {
+        "type": "String"
+      },
+      "label": {
+        "type": "String"
+      },
+      "resource": {
+        "type": "String"
+      },
+      "action": {
+        "type": "String"
+      },
+      "domain": {
+        "type": "String"
+      },
+      "description": {
+        "type": "String"
+      },
+      "group": {
+        "type": "String"
+      },
+      "order": {
+        "type": "Number"
+      },
+      "recommendedForTypes": {
+        "type": "Array"
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      },
+      "uniq_key": {
+        "key": 1
+      }
+    }
+  },
+  {
+    "className": "HospitalDoctorPrices",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "doctorUid": {
+        "type": "String"
+      },
+      "isOnline": {
+        "type": "Boolean"
+      },
+      "hospitalUid": {
+        "type": "String"
+      },
+      "currency": {
+        "type": "String"
+      },
+      "isDeleted": {
+        "type": "Boolean"
+      },
+      "price": {
+        "type": "Number"
+      },
+      "doctorDetails": {
+        "type": "Pointer",
+        "targetClass": "Doctors",
+        "required": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "PatientPackages",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "startDate": {
+        "type": "Date"
+      },
+      "patientUid": {
+        "type": "String"
+      },
+      "doctorUid": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String"
+      },
+      "price": {
+        "type": "Number"
+      },
+      "amountPaid": {
+        "type": "Number"
+      },
+      "currency": {
+        "type": "String"
+      },
+      "hospitalUid": {
+        "type": "String"
+      },
+      "packageUid": {
+        "type": "String"
+      },
+      "uid": {
+        "type": "String"
+      },
+      "procedureDate": {
+        "type": "Date"
+      },
+      "cancelledAt": {
+        "type": "Date"
+      },
+      "completedAt": {
+        "type": "Date"
+      },
+      "cancelledBy": {
+        "type": "String",
+        "required": false
+      },
+      "refundedAmount": {
+        "type": "Number",
+        "required": false,
+        "defaultValue": 0
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    },
+    "indexes": {
+      "_id_": {
+        "_id": 1
+      }
+    }
+  },
+  {
+    "className": "Partners",
+    "fields": {
+      "objectId": {
+        "type": "String"
+      },
+      "createdAt": {
+        "type": "Date"
+      },
+      "updatedAt": {
+        "type": "Date"
+      },
+      "ACL": {
+        "type": "ACL"
+      },
+      "nameEn": {
+        "type": "String",
+        "required": false
+      },
+      "nameAr": {
+        "type": "String",
+        "required": false
+      },
+      "imageUrl": {
+        "type": "String",
+        "required": false
+      },
+      "isDeleted": {
+        "type": "Boolean",
+        "required": false,
+        "defaultValue": false
+      }
+    },
+    "classLevelPermissions": {
+      "ACL": {
+        "*": {
+          "read": true,
+          "write": true
+        }
+      },
+      "find": {
+        "*": true
+      },
+      "count": {
+        "*": true
+      },
+      "get": {
+        "*": true
+      },
+      "create": {
+        "*": true
+      },
+      "update": {
+        "*": true
+      },
+      "delete": {
+        "*": true
+      },
+      "addField": {
+        "*": true
+      },
+      "protectedFields": {
+        "*": []
+      }
+    }
+  }
+]
