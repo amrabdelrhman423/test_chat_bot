@@ -17,9 +17,11 @@ import fetch from 'node-fetch';
 import Parse from "parse/node.js";
 import ollama from "ollama";
 import { QdrantClient } from "@qdrant/js-client-rest";
+import { Client } from "@opensearch-project/opensearch";
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import path from 'path';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,7 +48,13 @@ const DOCTORS_COLLECTION = "doctors_docs";
 const SPECIALTIES_COLLECTION = "specialties_docs";
 
 const EMBED_MODEL = process.env.EMBED_MODEL || "qwen3-embedding";
-const LLM_MODEL = process.env.LLM_MODEL || "llama3.1";
+const LLM_MODEL = process.env.LLM_MODEL || "qwen3";
+
+
+const OPENSEARCH_NODE = process.env.OPENSEARCH_NODE || "https://localhost:9200";
+const OPENSEARCH_USERNAME = process.env.OPENSEARCH_USERNAME || "admin";
+const OPENSEARCH_PASSWORD = process.env.OPENSEARCH_PASSWORD || "admin";
+const OPENSEARCH_SSL_INSECURE = process.env.OPENSEARCH_SSL_INSECURE || "true";
 
 const WS_PORT = process.env.WS_PORT || 3000;
 
@@ -113,12 +121,21 @@ async function parseLogin() {
 }
 
 // -----------------------------------------
-// INIT CHROMA
-// -----------------------------------------
-// -----------------------------------------
-// INIT QDRANT
+// INIT QDRANT & OPENSEARCH
 // -----------------------------------------
 const qdrant = new QdrantClient({ url: QDRANT_URL });
+const clientOS = new Client({
+    node: OPENSEARCH_NODE,
+    auth: {
+        username: OPENSEARCH_USERNAME,
+        password: OPENSEARCH_PASSWORD,
+    },
+    ssl: {
+        rejectUnauthorized: OPENSEARCH_SSL_INSECURE !== "true",
+    },
+});
+
+
 
 // -----------------------------------------
 // EMBEDDINGS
@@ -190,6 +207,15 @@ Strict Rules:
 7. Do NOT infer or add new medical terms.
 8. Keep optimizedQuery short (2–5 words max).
 
+9. HOSPITAL NAME VALIDATION (ZERO HALLUCINATION):
+   - You MUST extract 'hospitalName' ONLY if the user explicitly writes a proper noun that looks like a hospital name.
+   - "Hospital" (مستشفى) alone is NOT a name.
+   - "Clinic" (عيادة) alone is NOT a name.
+   - If user says "I want a hospital" -> hospitalName: null
+   - If user says "I want Al-Amal Hospital" -> hospitalName: "Al-Amal"
+   - If user says "My tooth hurts" -> hospitalName: null
+   - NEVER INFER a hospital based on a doctor or specialty.
+
 
 --------------------------------------------------------
 OUTPUT FORMAT (STRICT)
@@ -224,7 +250,13 @@ params.queryType MUST be one of:
   "allSpecialties"
 ]
 
-
+--------------------------------------------------------
+CRITICAL OPERATION RULES
+--------------------------------------------------------
+1. **RELATIONSHIPS RULE**:
+   - IF entity = "RELATIONSHIPS"
+   - THEN operation MUST be "combined"
+   - AND follow_up MUST be true
 
 --------------------------------------------------------
 CRITICAL ENTITY–QUERYTYPE CONSISTENCY RULE
@@ -254,6 +286,7 @@ Examples:
 - "دكتور عيون" (Eye doctor)
 - "عايز دكتور عيون" (Eye doctor)
 - "عندي الم في ضرسي" (Tooth pain)
+- "عايز حشو عصب" (Root canal) -> specialtyName: "Dentistry" (NO hospitalName)
 
 → operation: "combined"
 → follow_up: true
@@ -284,8 +317,9 @@ Examples (Arabic & English):
 - Cancer, Tumor -> "Oncology" / "اورام"
 
 RULE:
-- If the user uses an Arabic term (e.g. "معدتي بتوجعني"), map it to the Arabic specialty if possible ("باطنة"), or standard English if simpler.
-- Ideally use the exact database specialty name if you know it, otherwise the closest match.
+- ALWAYS output "specialtyName" in English (Standard Medical Terminology).
+- Map Arabic inputs to English: "باطنة" -> "Internal Medicine" or "Gastroenterology".
+- Do NOT output Arabic for specialtyName.
 ********************************************************
 
 --------------------------------------------------------
@@ -323,7 +357,31 @@ Examples:
 
 --------------------------------------------------------
 
-3️⃣ RELATIONSHIP QUESTIONS (MOST IMPORTANT)
+3️⃣ LOCATION-BASED SEARCH (Hospitals in City/Area)
+
+If user asks for hospitals in a specific location:
+- "مستشفى في الاسكندرية"
+- "Hospitals in Cairo"
+
+→ operation: "parse_search"
+→ entity: "HOSPITALS"
+→ params: {
+    "field": "addressAr" (if Arabic) OR "addressEn" (if English),
+    "value": <LOCATION NAME>
+  }
+
+Examples:
+- "مستشفيات في الاسكندرية"
+  → entity: "HOSPITALS"
+  → params: { "field": "addressAr", "value": "الاسكندرية" }
+
+- "Hospitals in Maadi"
+  → entity: "HOSPITALS"
+  → params: { "field": "addressEn", "value": "Maadi" }
+
+--------------------------------------------------------
+
+4️⃣ RELATIONSHIP QUESTIONS (MOST IMPORTANT)
 
 If the user asks:
 - Doctors IN a hospital or area
@@ -332,17 +390,27 @@ If the user asks:
 - What specialties a doctor has
 - Lists (all doctors, all hospitals, all specialties)
 
-→ operation: "parse_search"
+→ operation: "combined"
 → entity: "RELATIONSHIPS"
-→ follow_up: false
+→ follow_up: true
 → params MUST include queryType
 
 Examples:
 - "عايز دكاترة عين شمس"
   → queryType: "doctorsAtHospital"
 
-- "تخصصات مستشفى الالماني"
+- "i need doctors in hours hospital"
+  → entity: "RELATIONSHIPS"
+  → queryType: "doctorsAtHospital"
+  → params: { "hospitalName": "hours" }
+
+- "specialties in Al-Amal"
   → queryType: "specialtiesAtHospital"
+  → params: { "hospitalName": "Al-Amal" }
+
+- "Where does Dr. Ahmed work?"
+  → queryType: "hospitalsForDoctor"
+  → params: { "doctorName": "Ahmed" }
 
 --------------------------------------------------------
 
@@ -406,9 +474,23 @@ BEHAVIOR SAFETY RULES
 --------------------------------------------------------
 
 - NEVER guess intent beyond the text
+- If 'hospitalName' is NOT explicitly mentioned in the query, DO NOT include it in 'params'.
+- NEVER hallucinate a hospital name. If the user didn't say it, don't invent it.
+- **SPECIALTY RULE (ZERO TOLERANCE)**:
+  - If the question content does NOT include a search for or mention of a medical specialization, SYMPTOM, or DISEASE, do NOT add "specialtyName" to the "params" object.
+  - DO NOT infer a specialty if the user is only asking for general information about a doctor or hospital.
 - If relationship is implied → use RELATIONSHIPS
+- If user asks generally (e.g. "I want a doctor"), do NOT invent a hospital name.
 - If unsure → choose the safest operation
 - Output JSON ONLY
+
+--------------------------------------------------------
+BEHAVIOR EXAMPLES:
+- Query: "I want Al-Amal Hospital" -> params: { "field": "nameEn", "value": "Al-Amal" } (NO specialtyName)
+- Query: "Where is Dr. John?" -> params: { "field": "fullname", "value": "John" } (NO specialtyName)
+- Query: "Hospitals in Maadi" -> params: { "field": "addressEn", "value": "Maadi" } (NO specialtyName)
+- Query: "My stomach hurts" -> params: { "queryType": "specialistsAtHospital", "specialtyName": "Gastroenterology" } (YES specialtyName)
+--------------------------------------------------------
 
 --------------------------------------------------------
 SCHEMA CONTEXT
@@ -439,6 +521,7 @@ Output:
         // ---------------------------------------------------------
         // 🔧 FIX: Repair Arabic Params (Prevent Translation)
         // ---------------------------------------------------------
+
         const arabicRegex = /[\u0600-\u06FF]/;
         if (arabicRegex.test(query) && result.params) {
             const hasEnglishValue = (val) => val && /^[a-zA-Z\s]+$/.test(val);
@@ -505,11 +588,13 @@ Output:
             result.params.queryType = "specialistsAtHospital";
         }
 
-        // FORCE COMBINED MODE for Specialty searches to ensure Vector resolution
-        if (result.params && result.params.queryType === "specialistsAtHospital") {
-            console.log("⚓ Enforcing COMBINED mode for specialty search to verify name semantics.");
-            result.operation = "combined";
-            result.follow_up = true;
+        // FORCE COMBINED MODE for Relationship searches to ensure Vector resolution/enrichment
+        if (result.entity === "RELATIONSHIPS") {
+            if (result.operation !== "combined") {
+                console.log(`⚓ Enforcing COMBINED mode for RELATIONSHIPS [${result.params?.queryType}].`);
+                result.operation = "combined";
+                result.follow_up = true;
+            }
         }
 
         // FIX: Ensure specialtyName matches value if missing
@@ -822,234 +907,11 @@ async function executeRelationshipQuery(params, user) {
         return [];
     }
 
-    if (queryType === "doctorsAtHospital" && (params.hospitalName || params.nameAr || params.nameEn)) {
-        const Hospitals = Parse.Object.extend(PARSE_CLASS_HOSPITALS);
+    // ---------------------------------------------------------
+    // 1. VERIFICATION & COMPARISON (Special Handling - Return Strings)
+    // ---------------------------------------------------------
 
-        const cleanedHospital = cleanSearchTerm(params.hospitalName || params.nameAr || params.nameEn);
-        console.log(`🧹 Cleaned hospital name: "${params.hospitalName || params.nameAr || params.nameEn}" -> "${cleanedHospital}"`);
-
-        // Use EXACT user input without any character variations
-        const safe = escapeRegex(cleanedHospital);
-        const searchPattern = new RegExp(safe, 'i');
-
-        // Search in BOTH nameEn and nameAr using OR query
-        const hospitalQueryEn = new Parse.Query(Hospitals);
-        hospitalQueryEn.matches("nameEn", searchPattern);
-
-        const hospitalQueryAr = new Parse.Query(Hospitals);
-        hospitalQueryAr.matches("nameAr", searchPattern);
-
-        const hospitalQuery = Parse.Query.or(hospitalQueryEn, hospitalQueryAr);
-        const hospitals = await hospitalQuery.find({ sessionToken: user.getSessionToken() });
-
-        console.log(`🏥 Found ${hospitals.length} hospitals matching "${cleanedHospital}"`);
-
-        if (hospitals.length > 0) {
-            const hospitalUids = hospitals.map(h => h.get("uid"));
-            query.containedIn("hospitalUid", hospitalUids);
-        } else {
-            return [];
-        }
-
-        if (params.gender) {
-            const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
-            const doctorQuery = new Parse.Query(Doctors);
-            const safeGender = escapeRegex(params.gender);
-            const genderPattern = new RegExp(`^${safeGender}`, 'i');
-            doctorQuery.matches("gender", genderPattern);
-            const doctors = await doctorQuery.find({ sessionToken: user.getSessionToken() });
-
-            if (doctors.length > 0) {
-                const doctorUids = doctors.map(d => d.get("uid"));
-                query.containedIn("doctorUid", doctorUids);
-            } else {
-                return [];
-            }
-        }
-    } else if ((queryType === "hospitalsForDoctor" && params.doctorName) || (queryType === "hospitalsForDoctor" && params.specialtyName)) {
-
-        if (params.doctorName) {
-            const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
-            const doctorQuery = new Parse.Query(Doctors);
-
-            const cleanedDoctor = cleanSearchTerm(params.doctorName);
-            console.log(`🧹 Cleaned doctor name: "${params.doctorName}" -> "${cleanedDoctor}"`);
-
-            const safe = escapeRegex(cleanedDoctor);
-            const searchPattern = new RegExp(safe, 'i');
-            doctorQuery.matches("fullname", searchPattern);
-            const doctors = await doctorQuery.find({ sessionToken: user.getSessionToken() });
-
-            if (doctors.length > 0) {
-                const doctorUids = doctors.map(d => d.get("uid"));
-                query.containedIn("doctorUid", doctorUids);
-            } else {
-                return [];
-            }
-        } else if (params.specialtyName) {
-            console.log("⚠ Router mismatch: 'hospitalsForDoctor' used with 'specialtyName'. Treating as specialty search.");
-            const Specialties = Parse.Object.extend(PARSE_CLASS_SPECIALTIES);
-            const specialtyQuery = new Parse.Query(Specialties);
-
-            const cleanedSpecialty = cleanSearchTerm(params.specialtyName);
-
-            const safe = escapeRegex(cleanedSpecialty);
-            const searchPattern = new RegExp(safe, 'i');
-            specialtyQuery.matches("nameEn", searchPattern);
-            const specialties = await specialtyQuery.find({ sessionToken: user.getSessionToken() });
-
-            if (specialties.length > 0) {
-                const specialtyIds = specialties.map(s => s.id);
-                query.containedIn("specialtyUid", specialtyIds);
-            } else {
-                return [];
-            }
-        }
-    } else if (queryType === "specialistsAtHospital" && params.specialtyName) {
-        const Specialties = Parse.Object.extend(PARSE_CLASS_SPECIALTIES);
-        const specialtyQuery = new Parse.Query(Specialties);
-
-        const cleanedSpecialty = cleanSearchTerm(params.specialtyName);
-
-        const safe = escapeRegex(cleanedSpecialty);
-        const searchPattern = new RegExp(safe, 'i');
-
-        // Search in BOTH nameEn and nameAr
-        const specialtyQueryEn = new Parse.Query(Specialties);
-        specialtyQueryEn.matches("nameEn", searchPattern);
-
-        const specialtyQueryAr = new Parse.Query(Specialties);
-        specialtyQueryAr.matches("nameAr", searchPattern);
-
-        const specialtyQueryCombined = Parse.Query.or(specialtyQueryEn, specialtyQueryAr);
-        const specialties = await specialtyQueryCombined.find({ sessionToken: user.getSessionToken() });
-
-        console.log(`DEBUG: Found ${specialties.length} specialty records for "${cleanedSpecialty}"`);
-        specialties.forEach(s => console.log(`   - Found Spec: ${s.get("nameEn")} / ${s.get("nameAr")} (${s.id})`));
-
-        if (specialties.length > 0) {
-            const specialtyIds = specialties.map(s => s.id);
-            query.containedIn("specialtyUid", specialtyIds);
-        } else {
-            return [];
-        }
-
-        // Apply Gender Filter if present
-        if (params.gender) {
-            const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
-            const doctorQuery = new Parse.Query(Doctors);
-
-            // "Female" -> matches "Female", "female"
-            // "Male" -> matches "Male", "male"
-            const safeGender = escapeRegex(params.gender);
-            const genderPattern = new RegExp(`^${safeGender}`, 'i');
-            doctorQuery.matches("gender", genderPattern);
-
-            const doctors = await doctorQuery.find({ sessionToken: user.getSessionToken() });
-
-            if (doctors.length > 0) {
-                const doctorUids = doctors.map(d => d.get("uid"));
-                query.containedIn("doctorUid", doctorUids);
-                console.log(`⚧ Gender filter applied: ${params.gender} -> Found ${doctors.length} matching doctors.`);
-            } else {
-                console.log(`⚠ No doctors found for gender: ${params.gender}. Returning empty.`);
-                return [];
-            }
-        }
-
-        if (params.hospitalName) {
-            const Hospitals = Parse.Object.extend(PARSE_CLASS_HOSPITALS);
-
-            const cleanedHospital = cleanSearchTerm(params.hospitalName);
-
-            const safeName = escapeRegex(cleanedHospital);
-            const hospitalPattern = new RegExp(safeName, 'i');
-
-            // Search in BOTH nameEn and nameAr
-            const hospitalQueryEn = new Parse.Query(Hospitals);
-            hospitalQueryEn.matches("nameEn", hospitalPattern);
-
-            const hospitalQueryAr = new Parse.Query(Hospitals);
-            hospitalQueryAr.matches("nameAr", hospitalPattern);
-
-            const hospitalQuery = Parse.Query.or(hospitalQueryEn, hospitalQueryAr);
-            const hospitals = await hospitalQuery.find({ sessionToken: user.getSessionToken() });
-
-            if (hospitals.length > 0) {
-                const hospitalUids = hospitals.map(h => h.get("uid"));
-                query.containedIn("hospitalUid", hospitalUids);
-            } else {
-                return [];
-            }
-        }
-    } else if (queryType === "specialtiesAtHospital" && params.hospitalName) {
-        const Hospitals = Parse.Object.extend(PARSE_CLASS_HOSPITALS);
-
-        const cleanedHospital = cleanSearchTerm(params.hospitalName);
-
-        const safe = escapeRegex(cleanedHospital);
-        const searchPattern = new RegExp(safe, 'i');
-
-        // Search in BOTH nameEn and nameAr
-        const hospitalQueryEn = new Parse.Query(Hospitals);
-        hospitalQueryEn.matches("nameEn", searchPattern);
-
-        const hospitalQueryAr = new Parse.Query(Hospitals);
-        hospitalQueryAr.matches("nameAr", searchPattern);
-
-        const hospitalQuery = Parse.Query.or(hospitalQueryEn, hospitalQueryAr);
-        const hospitals = await hospitalQuery.find({ sessionToken: user.getSessionToken() });
-
-        if (hospitals.length > 0) {
-            const hospitalUids = hospitals.map(h => h.get("uid"));
-            query.containedIn("hospitalUid", hospitalUids);
-        } else {
-            return [];
-        }
-    } else if (queryType === "specialtiesForDoctor" && params.doctorName) {
-        const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
-        const doctorQuery = new Parse.Query(Doctors);
-
-        const cleanedDoctor = cleanSearchTerm(params.doctorName);
-        console.log(`🧹 Cleaned doctor name: "${params.doctorName}" -> "${cleanedDoctor}"`);
-
-        const safe = escapeRegex(cleanedDoctor);
-        const searchPattern = new RegExp(safe, 'i');
-        doctorQuery.matches("fullname", searchPattern);
-        const doctors = await doctorQuery.find({ sessionToken: user.getSessionToken() });
-
-        if (doctors.length > 0) {
-            const doctorUids = doctors.map(d => d.get("uid"));
-            query.containedIn("doctorUid", doctorUids);
-        } else {
-            return [];
-        }
-    } else if (queryType === "specialtiesComparison" && params.doctor1Name && params.doctor2Name) {
-        // Handle comparison of two doctors
-        const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
-
-        // Find Doctor 1
-        const doctor1Query = new Parse.Query(Doctors);
-        const cleaned1 = cleanSearchTerm(params.doctor1Name);
-        const safe1 = escapeRegex(cleaned1);
-        doctor1Query.matches("fullname", new RegExp(safe1, 'i'));
-        const doctors1 = await doctor1Query.find({ sessionToken: user.getSessionToken() });
-
-        // Find Doctor 2
-        const doctor2Query = new Parse.Query(Doctors);
-        const cleaned2 = cleanSearchTerm(params.doctor2Name);
-        const safe2 = escapeRegex(cleaned2);
-        doctor2Query.matches("fullname", new RegExp(safe2, 'i'));
-        const doctors2 = await doctor2Query.find({ sessionToken: user.getSessionToken() });
-
-        if (doctors1.length === 0 && doctors2.length === 0) return [];
-
-        const doctorUids = [];
-        if (doctors1.length > 0) doctorUids.push(...doctors1.map(d => d.get("uid")));
-        if (doctors2.length > 0) doctorUids.push(...doctors2.map(d => d.get("uid")));
-
-        query.containedIn("doctorUid", doctorUids);
-    } else if (queryType === "checkDoctorAtHospital" && params.doctorName && params.hospitalName) {
+    if (queryType === "checkDoctorAtHospital" && params.doctorName && params.hospitalName) {
         // 1. Find Doctor
         const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
         const docQuery = new Parse.Query(Doctors);
@@ -1081,8 +943,9 @@ async function executeRelationshipQuery(params, user) {
         } else {
             return [`VERIFIED: NO. No record found linking Dr. ${params.doctorName} to ${params.hospitalName}.`];
         }
+    }
 
-    } else if (queryType === "checkDoctorSpecialty" && params.doctorName && params.specialtyName) {
+    if (queryType === "checkDoctorSpecialty" && params.doctorName && params.specialtyName) {
         // 1. Find Doctor
         const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
         const docQuery = new Parse.Query(Doctors);
@@ -1093,7 +956,6 @@ async function executeRelationshipQuery(params, user) {
         // 2. Find Specialty
         const Specialties = Parse.Object.extend(PARSE_CLASS_SPECIALTIES);
         const specQuery = new Parse.Query(Specialties);
-        // Map Arabic if needed or rely on regex
         const specPattern = new RegExp(escapeRegex(cleanSearchTerm(params.specialtyName)), 'i');
         const specQueryEn = new Parse.Query(Specialties).matches("nameEn", specPattern);
         const specQueryAr = new Parse.Query(Specialties).matches("nameAr", specPattern);
@@ -1116,14 +978,123 @@ async function executeRelationshipQuery(params, user) {
         } else {
             return [`VERIFIED: NO. No record found linking Dr. ${params.doctorName} to specialty ${params.specialtyName}.`];
         }
+    }
 
-    } else if (queryType === "allDoctors") {
-        // Fetch all doctors (relationships)
-        console.log("🔍 Fetching ALL doctors with relationships...");
+    if (queryType === "specialtiesComparison" && params.doctor1Name && params.doctor2Name) {
+        const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
+        const d1Query = new Parse.Query(Doctors).matches("fullname", new RegExp(escapeRegex(cleanSearchTerm(params.doctor1Name)), 'i'));
+        const d2Query = new Parse.Query(Doctors).matches("fullname", new RegExp(escapeRegex(cleanSearchTerm(params.doctor2Name)), 'i'));
+
+        const [docs1, docs2] = await Promise.all([
+            d1Query.find({ sessionToken: user.getSessionToken() }),
+            d2Query.find({ sessionToken: user.getSessionToken() })
+        ]);
+
+        if (docs1.length === 0 && docs2.length === 0) return [];
+
+        const doctorUids = [];
+        if (docs1.length > 0) doctorUids.push(...docs1.map(d => d.get("uid")));
+        if (docs2.length > 0) doctorUids.push(...docs2.map(d => d.get("uid")));
+        query.containedIn("doctorUid", doctorUids);
+    }
+
+    // ---------------------------------------------------------
+    // 2. SEARCH & LIST (Composable Logic / Unified Filter)
+    // ---------------------------------------------------------
+
+    // Logic: Apply filters for whatever params exist, regardless of queryType label.
+    // This supports "doctorsAtHospital" with extra implicit filters, or "specialtiesForDoctor" etc.
+
+    if (queryType === "allDoctors") {
+        console.log("🔍 Fetching ALL doctors...");
         query.limit(100);
     } else {
-        console.warn(`⚠ executeRelationshipQuery: No matching queryType block for "${queryType}" or missing params.`);
-        return [];
+        query.limit(15);
+    }
+
+    // A. Filter by Hospital (if exists)
+    if (params.hospitalName || params.nameAr || params.nameEn) {
+        const val = params.hospitalName || params.nameAr || params.nameEn;
+        const cleaned = cleanSearchTerm(val);
+        console.log(`🏥 Filtering by Hospital: "${cleaned}"`);
+
+        const Hospitals = Parse.Object.extend(PARSE_CLASS_HOSPITALS);
+        const pattern = new RegExp(escapeRegex(cleaned), 'i');
+        const qEn = new Parse.Query(Hospitals).matches("nameEn", pattern);
+        const qAr = new Parse.Query(Hospitals).matches("nameAr", pattern);
+        const hospitals = await Parse.Query.or(qEn, qAr).find({ sessionToken: user.getSessionToken() });
+
+        if (hospitals.length > 0) {
+            query.containedIn("hospitalUid", hospitals.map(h => h.get("uid")));
+        } else {
+            console.log(`⚠ Hospital "${cleaned}" not found. Returning empty.`);
+            return [];
+        }
+    }
+
+    // B. Filter by Specialty (if exists)
+    if (params.specialtyName) {
+        const cleaned = cleanSearchTerm(params.specialtyName);
+        console.log(`� Filtering by Specialty: "${cleaned}"`);
+
+        const Specialties = Parse.Object.extend(PARSE_CLASS_SPECIALTIES);
+        const pattern = new RegExp(escapeRegex(cleaned), 'i');
+
+        console.log(`Pattern: ${pattern}`);
+
+        const qEn = new Parse.Query(Specialties).matches("nameEn", pattern);
+        const qAr = new Parse.Query(Specialties).matches("nameAr", pattern);
+        const specialties = await Parse.Query.or(qEn, qAr).find({ sessionToken: user.getSessionToken() });
+
+        if (specialties.length > 0) {
+            query.containedIn("specialtyUid", specialties.map(s => s.id));
+        } else {
+            console.log(`⚠ Specialty "${cleaned}" not found. Returning empty.`);
+            return [];
+        }
+    }
+
+    // C. Filter by Doctor / Gender (Combined Logic)
+    let candidateDoctorUids = null;
+    const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
+
+    if (params.doctorName) {
+        const cleaned = cleanSearchTerm(params.doctorName);
+        console.log(`👨‍⚕️ Filtering by Doctor Name: "${cleaned}"`);
+        const pattern = new RegExp(escapeRegex(cleaned), 'i');
+        const docs = await new Parse.Query(Doctors).matches("fullname", pattern).find({ sessionToken: user.getSessionToken() });
+        const ids = docs.map(d => d.get("uid"));
+        candidateDoctorUids = ids;
+
+        if (ids.length === 0) {
+            console.log(`⚠ Doctor "${cleaned}" not found. Returning empty.`);
+            return [];
+        }
+    }
+
+    if (params.gender) {
+        console.log(`⚧ Filtering by Gender: "${params.gender}"`);
+        const safeGender = escapeRegex(params.gender);
+        const pattern = new RegExp(`^${safeGender}`, 'i');
+        const docs = await new Parse.Query(Doctors).matches("gender", pattern).find({ sessionToken: user.getSessionToken() });
+        const ids = docs.map(d => d.get("uid"));
+
+        if (candidateDoctorUids === null) {
+            candidateDoctorUids = ids;
+        } else {
+            // Intersection: Must match BOTH name and gender if both provided
+            candidateDoctorUids = candidateDoctorUids.filter(uid => ids.includes(uid));
+        }
+
+        if (candidateDoctorUids.length === 0) {
+            console.log(`⚠ No doctors found matching gender "${params.gender}" (and name if provided).`);
+            return [];
+        }
+    }
+
+    // Apply accumulated Doctor Constraints
+    if (candidateDoctorUids !== null) {
+        query.containedIn("doctorUid", candidateDoctorUids);
     }
 
     const results = await query.find({ sessionToken: user.getSessionToken() });
@@ -1173,12 +1144,18 @@ Arabic Name: ${fixEncoding(spec.nameAr)}
             return `
 Doctor: ${doctor ? doctor.get("fullname") : "Unknown"}
 Doctor (Ar): ${doctor ? fixEncoding(doctor.get("fullnameAr") || "") : ""}
-Hospital: ${hospital ? hospital.get("nameEn") : "Unknown"}
-Hospital (Ar): ${hospital ? fixEncoding(hospital.get("nameAr") || "") : ""}
-Specialty: ${specialty ? specialty.get("nameEn") : "Unknown"}
-Specialty (Ar): ${specialty ? fixEncoding(specialty.get("nameAr") || "") : ""}
+Doctor title: ${doctor ? fixEncoding(doctor.get("title") || "") : ""}
+Doctor position : ${doctor ? fixEncoding(doctor.get("positionEn") || "") : ""}
+Doctor position (Ar): ${doctor ? fixEncoding(doctor.get("positionAr") || "") : ""}
+Doctor qualification: ${doctor ? fixEncoding(doctor.get("qualificationsEn") || "") : ""}
+Doctor qualification (Ar): ${doctor ? fixEncoding(doctor.get("qualificationsAr") || "") : ""}
+Hospital name: ${hospital ? hospital.get("nameEn") : "Unknown"}
+Hospital name (Ar): ${hospital ? fixEncoding(hospital.get("nameAr") || "") : ""}
+Specialty name: ${specialty ? specialty.get("nameEn") : "Unknown"}
+Specialty name (Ar): ${specialty ? fixEncoding(specialty.get("nameAr") || "") : ""}
 Doctor Title: ${doctor ? doctor.get("title") : "Unknown"}
 Hospital Address: ${hospital ? hospital.get("addressEn") : "Unknown"}
+Hospital Address (Ar): ${hospital ? fixEncoding(hospital.get("addressAr") || "") : "Unknown"}
         `.trim();
         })
     );
@@ -1199,39 +1176,123 @@ Hospital Address: ${hospital ? hospital.get("addressEn") : "Unknown"}
 // IMPROVED VECTOR SEARCH
 // -----------------------------------------
 
+// Helper: Arabic Normalizer from Trello
+function normalizeArabicMedical(text) {
+    if (!text) return "";
+    return text
+        .replace(/[\u064B-\u065F]/g, '') // remove diacritics
+        .replace(/[إأآٱ]/g, 'ا') // normalize alef
+        .replace(/ى/g, 'ي') // normalize ya
+        .replace(/ة/g, 'ه') // normalize ta marbuta
+        .replace(/ـ/g, '') // remove tatweel
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+// Helper: Hybrid Merge Strategy (Weighted Score Fuse)
+function hybridMerge(bm25Results, vectorResults) {
+    const map = new Map();
+
+    // Process BM25 Results (OpenSearch)
+    bm25Results.forEach(r => {
+        // Normalizing max score could be better, but using raw score * 0.6 as per request
+        const score = (r._score || 0) * 0.6;
+        map.set(r._id, { ...r._source, score, matchType: ['bm25'] });
+    });
+
+    // Process Vector Results (Qdrant)
+    vectorResults.forEach(r => {
+        const id = r.payload?.mongoId || r.id; // Ensure ID alignment
+        // Qdrant scores are usually Cosine (0-1), OpenSearch scores are unbounded BM25.
+        // We might need to normalize Qdrant score to scale. Let's assume simple weight for now.
+        const score = (r.score || 0) * 0.4; // Weighting vector less? Or 0.4 * scale? 
+        // Let's stick to the requested logic: score * 0.4
+
+        if (map.has(id)) {
+            const entry = map.get(id);
+            entry.score += score;
+            entry.matchType.push('vector');
+        } else {
+            map.set(id, { ...r.payload, score, matchType: ['vector'] });
+        }
+    });
+
+    return [...map.values()].sort((a, b) => b.score - a.score);
+}
+
 async function performVectorSearch(query, collection, limit = 5, scoreThreshold = 0.5) {
-    console.log(`🔍 Performing vector search on ${collection} for query: ${query}`);
 
-    // Generate embedding for the query
-    const vector = await embed(query);
-    // console.log(`🔍 query Vector: ${vector}`);
+    const normalizedQuery = normalizeArabicMedical(query);
 
-    // Search with higher limit to get more candidates
-    const results = await qdrant.search(collection, {
-        vector,
-        limit: limit * 2,  // Get more results for filtering
-        score_threshold: scoreThreshold,  // Only get results above threshold
-    });
+    console.log(`🔍 Performing Hybrid Search on ${collection} for: "${normalizedQuery}"`);
 
-    // Filter and deduplicate results
-    const seen = new Set();
-    const filtered = results
-        .filter(r => {
-            if (!r.payload || !r.payload.parse_id) return true; // keep if no id to be safe
-            const id = r.payload.parse_id;
-            if (seen.has(id)) return false;
-            seen.add(id);
-            return true;
-        })
-        .slice(0, limit);  // Take top N after deduplication
+    const searchLimit = limit * 2; // Fetch more for better intersection
 
-    console.log(`📊 Vector search found ${filtered.length} unique results (score threshold: ${scoreThreshold})`);
+    // 1. Generate Vector
+    const vectorPromise = embed(query); // Embed original or normalized? Usually original preserves context better for LLM.
+    // Let's use normalized for consistency if your embedding model is simple, but vast LLMS handle raw well.
+    // Sticking to original for embedding to keep semantic nuance, normalized for BM25.
 
-    filtered.forEach((r, i) => {
-        console.log(` ${fixEncoding(r.payload.text)} ➤ Result ${i + 1}: Similarity ${(r.score * 100).toFixed(2)}%`);
-    });
+    // 2. Parallel Search Execution
+    try {
+        const [vector, bm25Res] = await Promise.all([
+            vectorPromise,
+            clientOS.search({
+                index: collection, // Ensure OS index names match Qdrant collection names
+                body: {
+                    size: searchLimit,
+                    query: {
+                        multi_match: {
+                            query: normalizedQuery,
+                            fields: ['text^2', 'nameAr', 'nameEn', 'title'], // Search across relevant text fields
+                            fuzziness: "AUTO"
+                        }
+                    }
+                }
+            }).catch(e => {
+                console.error("OpenSearch BM25 Failed:", e.message);
+                return { body: { hits: { hits: [] } } };
+            })
+        ]);
 
-    return filtered.map(r => r.payload.text);
+        const vectorRes = await qdrant.search(collection, {
+            vector: vector,
+            limit: searchLimit,
+            score_threshold: scoreThreshold
+        }).catch(e => {
+            console.error("Qdrant Vector Search Failed:", e.message);
+            return [];
+        });
+
+        const bm25Hits = bm25Res.body.hits.hits;
+
+        console.log(`📊 Raw Results: OpenSearch(BM25)=${bm25Hits.length}, Qdrant(Vector)=${vectorRes.length}`);
+
+        // bm25Hits.forEach((r, i) => {
+        //     console.log(` ${r.body} ➤ Score: ${r._score.toFixed(4)} [bm25]`);
+        // });
+
+        // vectorRes.forEach((r, i) => {
+        //     console.log(` ${r.payload} ➤ Score: ${r.score.toFixed(4)} [vector]`);
+        // });
+        // 3. Fusion
+        const fusedResults = hybridMerge(bm25Hits, vectorRes).slice(0, limit);
+
+        console.log(`🤝 Hybrid Fusion yielded ${fusedResults.length} unique results.`);
+
+        fusedResults.forEach((r, i) => {
+
+            console.log(` ${fixEncoding(r.text || r.name)} ➤ Score: ${r.score.toFixed(4)} [${r.matchType.join('+')}]`);
+        });
+
+        // Return text for RAG context, or full objects if needed
+        return fusedResults.map(r => r.text);
+
+    } catch (e) {
+        console.error("Hybrid Search Error:", e);
+        return [];
+    }
 }
 
 async function extractEntityFromContext(question, contextChunks) {
@@ -1242,8 +1303,7 @@ async function extractEntityFromContext(question, contextChunks) {
 
     const prompt = `
 You are an intelligent assistant. The user asked a question, and we found some text snippets.
-Analyze the snippets to see if they refer to a SPECIFIC Hospital, Doctor, or Specialty that matches the user's intent.
-If yes, extract the name to query the database for structured details (like address, phone, rating).
+Analyze the snippets to see if they refer to SPECIFIC Hospitals, Doctors, or Specialties that match the user's intent.
 
 User Question: "${question}"
 
@@ -1253,13 +1313,20 @@ ${context}
 Output JSON ONLY:
 {
   "found": boolean,
-  "entity": "HOSPITALS" or "DOCTORS" or "SPECIALTIES",
-  "params": { 
-    "field": "nameEn" (for hospitals/specialties) or "fullname" (for doctors) - OR "nameAr"/"fullnameAr" if in Arabic, 
-    "value": "extracted name" 
-  }
+  "entities": [
+    {
+      "type": "HOSPITALS" | "DOCTORS" | "SPECIALTIES",
+      "value": "extracted name",
+      "original": "exact substring from text"
+    }
+  ]
 }
-If no specific entity is found, set "found": false.
+
+Instructions:
+1. Extract ALL relevant entities mentioned in the snippets that relate to the question.
+2. If the user asks about a specific hospital and context mentions it, extract it.
+3. If context mentions a specific specialty relevant to the user's symptom, extract it.
+4. Set "found": true if at least one entity is extracted.
 `.trim();
 
     try {
@@ -1333,36 +1400,117 @@ Output JSON ONLY:
 
 async function optimizeVectorSearchStrategy(query) {
     const prompt = `
-You are a vector search optimizer for a medical database.
+You are an intelligent medical query intent classifier and vector search optimizer.
 
 Collections:
-1. hospitals_docs: Hospital names, addresses, facilities, types.
-2. doctors_docs: Doctor names, titles, qualifications, languages.
-3. specialties_docs: Medical specialties, disease names, symptoms, treatments.
+1. hospitals_docs:
+   - Hospital names
+   - Clinics, centers
+   - Addresses, locations
+   - Facilities (ICU, ER, lab, radiology)
 
-User Query: "${query}"
+2. doctors_docs:
+   - Doctor names
+   - Titles (دكتور، أخصائي، استشاري، بروفيسور)
+   - Languages spoken
+   - Years of experience
 
-Rules:
-1. Detect the language of the User Query automatically.
+3. specialties_docs:
+   - Medical specialties
+   - Diseases
+   - Symptoms
+   - Treatments and procedures
+
+User Query:
+"${query}"
+
+--------------------
+INTENT DETECTION RULES
+--------------------
+
+1. Detect the language automatically (Arabic / English / Mixed).
 2. DO NOT translate the query.
-3. The optimizedQuery MUST remain in the same language as the input.
-4. Remove stop words ONLY for that language (e.g., Arabic or English).
-5. Keep only medically relevant keywords (symptoms, diseases, specialties, doctor/hospital indicators).
-6. Do NOT add new terms that were not mentioned by the user.
-7. Keep the query short and suitable for vector similarity search.
+3. The optimizedQuery MUST remain in the same language.
 
-Task:
-1. Select the ONE best collection:
-   - Disease, symptom, treatment → specialties_docs
-   - Doctor name, title, language → doctors_docs
-   - Hospital name, facility, location → hospitals_docs
+--------------------
+HOW TO CHOOSE COLLECTION
+--------------------
 
-Output JSON ONLY:
+A. Choose "specialties_docs" IF the query contains:
+   - Symptoms (pain, fever, headache, nausea, وجع، ألم، صداع، دوخة)
+   - Diseases (diabetes, flu, ضغط، سكر، ربو)
+   - Medical specialties WITHOUT explicitly asking for a doctor or hospital
+   - User describes a condition or complaint
+
+   Examples:
+   - "عندي ألم في المعدة"
+   - "صداع مستمر"
+   - "stomach pain"
+   - "what is diabetes"
+   - "عايزة اولد"
+
+
+B. Choose "doctors_docs" IF the query contains:
+   - Explicit request for a doctor
+   - Doctor titles or indicators:
+     (دكتور، طبيب، أخصائي، استشاري، Doctor, Dr)
+   - Phrases like:
+     "عايز دكتور", "اقترح دكتور", "best doctor", "doctor for"
+
+   Examples:
+   - "عايز دكتور عيون"
+   - "أفضل دكتور قلب"
+   - "eye doctor"
+   - "Dr Ahmed Hassan"
+
+C. Choose "hospitals_docs" IF the query contains:
+   - Hospital names
+   - Clinics or medical centers
+   - Location or facilities
+   - Words like:
+     (مستشفى، مركز طبي، عيادة، hospital, clinic, center)
+
+   Examples:
+   - "مستشفى السلام"
+   - "hospital with ICU"
+   - "عيادة أسنان قريبة"
+
+--------------------
+PRIORITY RULES (VERY IMPORTANT)
+--------------------
+
+1. If symptoms/diseases AND doctor indicators appear together:
+   → Choose doctors_docs
+
+   Example:
+   - "عندي ألم في ضهري عايز دكتور"
+   → doctors_docs
+
+2. If symptoms/diseases appear WITHOUT doctor or hospital indicators:
+   → specialties_docs
+
+3. If hospital indicators appear, EVEN if symptoms exist:
+   → hospitals_docs
+
+--------------------
+QUERY OPTIMIZATION RULES
+--------------------
+
+1. Remove stop words ONLY for the detected language.
+2. Keep ONLY medically relevant keywords.
+3. Do NOT add or infer new medical terms.
+4. Do NOT guess specialties not mentioned explicitly.
+5. Keep the optimizedQuery short and vector-search friendly.
+
+--------------------
+OUTPUT FORMAT (JSON ONLY)
+--------------------
 {
   "collection": "hospitals_docs" | "doctors_docs" | "specialties_docs",
   "optimizedQuery": "string"
 }
 `.trim();
+
 
     try {
         const response = await ollama.generate({
@@ -1386,28 +1534,33 @@ async function generateAIResponse(question, contextText) {
         return "I couldn't find related information.";
     }
 
+    // Detect language of the question (Simple Regex)
+    const isArabic = /[\u0600-\u06FF]/.test(question);
+    const languageInstruction = isArabic
+        ? "⚠️ THE USER ASKED IN ARABIC. YOU MUST REPLY IN ARABIC."
+        : "⚠️ THE USER ASKED IN ENGLISH. YOU MUST REPLY IN ENGLISH.";
+
     const prompt = `
-You are a helpful medical information assistant. Answer the user's question using ONLY the context provided below.
+You are a helpful medical information assistant.
+Your task is to provide a DIRECT answer to the user's question based ONLY on the provided context.
 
-STRICT INSTRUCTIONS:
-- You DO NOT have access to the internet or outside knowledge.
-- You MUST answer ONLY using the provided CONTEXT. 
-- If the answer is not in the CONTEXT, you MUST say "I could not find this information in the database".
-- DO NOT halllucinate or invent information.
+⛔️ STRICT DATA BOUNDARY:
+- IGNORE your internal knowledge base.
+- USE ONLY the text in the "CONTEXT" section below.
+- DO NOT hallucinate or use external knowledge.
+- If the context does NOT contain relevant information, state that the information is not available.
 
-Database Structure Context: 
-The system is built on a relational model where Doctors are linked to Hospitals and Specialties via a central 'HospitalDoctorSpecialty' table.
+${languageInstruction}
 
 IMPORTANT RULES:
-1. CRITICAL: List ALL items from the context. If there are 25 doctors in the context, you MUST list all 25.
-2. DO NOT SUMMARIZE. DO NOT TRUNCATE.
-3. LANGUAGE RULES:
-   - If the user's question is in Arabic, respond in Arabic
-   - Use ONLY one language for names (prefer Arabic if available in 'Name (Ar)')
-4. FORMATTING RULES:
-   - Use a simple list format: "- [Name] - [Specialty] - [Hospital]"
-5. NAME ACCURACY:
-   - COPY names EXACTLY. Do NOT translate or transliterate.
+1. **DIRECT ANSWER**: Answer the question directly. If the context contains a list of doctors or hospitals that match the query, list them all. If the question is specific, provide a specific answer.
+2. **SAME LANGUAGE**: Your entire response MUST be in the same language as the question.
+3. **NO TRANSLATION (ZERO TOLERANCE)**: 
+   - COPY names, addresses, and entities EXACTLY as they appear in the context.
+   - DO NOT translate English names to Arabic.
+   - DO NOT translate Arabic names to English.
+   - DO NOT transliterate.
+4. **DATA INTEGRITY**: Do not summarize or truncate if the user asks for a list. Otherwise, stay focused on the question.
 
 CONTEXT:
 ${contextText}
@@ -1416,7 +1569,7 @@ QUESTION:
 ${question}
 
 ANSWER:
-  `.trim();
+`.trim();
 
     try {
         const response = await ollama.generate({
@@ -1443,6 +1596,34 @@ ANSWER:
         console.error("Generation Error:", e);
         return "I'm sorry, I encountered an error providing the answer.";
     }
+}
+
+
+function determineVectorStrategyFromParams(params) {
+    if (!params) return null;
+
+    // Case 1: Hospital and Specialty provided
+    if (params.hospitalName && params.specialtyName) {
+        console.log("⚡ Strategy: Derived MULTI-SEARCH from Params (Hospital + Specialty)");
+        return {
+            type: 'multi',
+            queries: [
+                { collection: HOSPITALS_COLLECTION, query: params.hospitalName },
+                { collection: SPECIALTIES_COLLECTION, query: params.specialtyName }
+            ]
+        };
+    }
+
+    // Case 2: Only Hospital Name provided
+    if (params.hospitalName) {
+        console.log("⚡ Strategy: Derived from Params (Hospital name)");
+        return {
+            collection: HOSPITALS_COLLECTION,
+            optimizedQuery: params.hospitalName
+        };
+    }
+
+    return null;
 }
 
 async function ragAnswer(question, user) {
@@ -1481,45 +1662,72 @@ async function ragAnswer(question, user) {
 
     // Handle "combined" operation: Vector Search FIRST, then Parse Search
     if (route.operation === "combined") {
+
         console.log("🔄 Operation: COMBINED (Vector + Parse)");
 
-        // Use LLM to decide collection and optimize query
-        const strategy = await optimizeVectorSearchStrategy(question);
+        // 1. Try to determine strategy from Params first (Deterministic)
+        let strategy = determineVectorStrategyFromParams(route.params);
 
-        let targetCollection = strategy.collection;
-        // Map simplified names to actual constants if needed (Though prompt uses actual names)
-        if (![HOSPITALS_COLLECTION, DOCTORS_COLLECTION, SPECIALTIES_COLLECTION].includes(targetCollection)) {
-            // Fallback if LLM hallucinates a name
-            if (targetCollection.includes("doctor")) targetCollection = DOCTORS_COLLECTION;
-            else if (targetCollection.includes("special")) targetCollection = SPECIALTIES_COLLECTION;
-            else targetCollection = HOSPITALS_COLLECTION;
+        if (!strategy) {
+            // Fallback: Use LLM to decide collection and optimize query (Probabilistic)
+            strategy = await optimizeVectorSearchStrategy(question);
         }
 
-        console.log(`🎯 Targeted Vector Search: "${fixEncoding(strategy.optimizedQuery)}" in [${fixEncoding(targetCollection)}]`);
+        if (strategy && strategy.type === 'multi') {
+            console.log(`🎯 Targeted Multi-Vector Search: ${strategy.queries.length} queries.`);
+            const searchPromises = strategy.queries.map(q => performVectorSearch(fixEncoding(q.query), fixEncoding(q.collection), 5, 0.4)
+            );
+            const results = await Promise.all(searchPromises);
+            // Combine unique results
+            vectorResults = [...new Set(results.flat())];
+        } else {
+            let targetCollection = strategy?.collection || HOSPITALS_COLLECTION;
 
+            // Map simplified names to actual constants if needed (Though prompt uses actual names)
+            if (![HOSPITALS_COLLECTION, DOCTORS_COLLECTION, SPECIALTIES_COLLECTION].includes(targetCollection)) {
+                // Fallback if LLM hallucinates a name
+                if (targetCollection && targetCollection.includes("doctor")) targetCollection = DOCTORS_COLLECTION;
+                else if (targetCollection && targetCollection.includes("special")) targetCollection = SPECIALTIES_COLLECTION;
+                else targetCollection = HOSPITALS_COLLECTION;
+            }
 
-        // 1. Vector Search for symptoms/general info
-        vectorResults = await performVectorSearch(fixEncoding(strategy.optimizedQuery), fixEncoding(targetCollection), 5, 0.4);
+            console.log(`🎯 Targeted Vector Search: "${fixEncoding(strategy.optimizedQuery)}" in [${fixEncoding(targetCollection)}]`);
+
+            // 1. Vector Search for symptoms/general info
+            vectorResults = await performVectorSearch(fixEncoding(strategy.optimizedQuery), fixEncoding(targetCollection), 5, 0.4);
+        }
         // Store vector results temporarily but don't add to context immediately
 
         // DYNAMIC UPDATE: Use vector results to refine Parse Search params
         // If vector search extracts a specialty name, validate it matches the question then use it
         if (route.params && route.params.queryType === "specialistsAtHospital") {
             console.log("🔄 Analyzing Vector results to refine Specialty Name...");
+
+            console.log("Vector Results length:", vectorResults.length);
+
             const extraction = await extractEntityFromContext(question, vectorResults);
 
-            if (extraction && extraction.found && extraction.entity === "SPECIALTIES" && extraction.params.value) {
-                const extractedValue = extraction.params.value;
+            console.log("Extraction:", extraction);
 
-                // Validate that extracted specialty makes sense for the question
-                const isValidForQuestion = await validateSpecialtyMatch(question, extractedValue);
+            if (extraction && extraction.found) {
+                // Find specialty in extracted entities (New Format) or fallback (Old Format)
+                const specialtyEnt = extraction.entities ? extraction.entities.find(e => e.type === "SPECIALTIES") : (extraction.entity === "SPECIALTIES" ? { value: extraction.params.value } : null);
 
-                if (isValidForQuestion) {
-                    console.log(`✨ UPDATING specialtyName from Vector: "${route.params.specialtyName}" -> "${extractedValue}"`);
-                    route.params.specialtyName = extractedValue;
-                    specialtyRefinedFromVector = true;
+                if (specialtyEnt && specialtyEnt.value) {
+                    const extractedValue = specialtyEnt.value;
+
+                    // Validate that extracted specialty makes sense for the question
+                    const isValidForQuestion = await validateSpecialtyMatch(question, extractedValue);
+
+                    if (isValidForQuestion) {
+                        console.log(`✨ UPDATING specialtyName from Vector: "${route.params.specialtyName}" -> "${extractedValue}"`);
+                        route.params.specialtyName = extractedValue;
+                        specialtyRefinedFromVector = true;
+                    } else {
+                        console.log(`⚠ Vector extracted "${extractedValue}" but it doesn't match question meaning. Keeping original.`);
+                    }
                 } else {
-                    console.log(`⚠ Vector extracted "${extractedValue}" but it doesn't match question meaning. Keeping original.`);
+                    console.log("⚠ Vector extraction did not find a valid specialty. Keeping original params.");
                 }
             } else {
                 console.log("⚠ Vector extraction did not find a valid specialty. Keeping original params.");
@@ -1564,7 +1772,6 @@ async function ragAnswer(question, user) {
         }
     }
     // Handle "vector_search"
-    // Handle "vector_search"
     else {
         console.log("🔄 Operation: VECTOR SEARCH");
 
@@ -1597,47 +1804,65 @@ async function ragAnswer(question, user) {
         }
     }
 
+    console.log("----------------contextText---------------- ");
+    console.log(contextText);
+    console.log("----------------contextText---------------- ");
     // Enrichment Logic (if follow_up is true or we have vector results)
-    if ((route.follow_up || vectorResults.length > 0) && route.operation !== "parse_search") {
+    if ((route.follow_up || vectorResults.length > 0) && contextText.length < 1 && route.operation !== "parse_search") {
 
         // 4. ENRICHMENT: Try to extract entities from vector context and query Parse
         console.log("🔄 Analyzing Vector results for structured data enrichment...");
         const extraction = await extractEntityFromContext(question, vectorResults);
 
         if (extraction && extraction.found) {
-            console.log(`🎯 Extracted entity from context: ${extraction.entity} - ${extraction.params.value}`);
-            let enrichFn;
-            if (extraction.entity === "HOSPITALS") enrichFn = executeHospitalParseQuery;
-            else if (extraction.entity === "DOCTORS") enrichFn = executeDoctorParseQuery;
-            else if (extraction.entity === "SPECIALTIES") {
-                // SMART ENRICHMENT: Only search for doctors in this new specialty if:
-                // 1. The primary search yielded NO results (we need a fallback).
-                // 2. OR the primary search wasn't about doctors to begin with.
-                // 3. AND we haven't already refined the specialty from vector (to avoid corruption).
-                const primarySearchFailed = !parseResults || parseResults.length === 0;
 
-                if (entity === "RELATIONSHIPS" && primarySearchFailed && !specialtyRefinedFromVector) {
-                    console.log("✨ Enrichment Strategy: Primary search empty. Found 'SPECIALTIES' in context, searching doctors for it.");
-                    enrichFn = executeRelationshipQuery;
-                    extraction.params.queryType = "specialistsAtHospital";
-                    extraction.params.specialtyName = extraction.params.value;
-                } else if (entity === "RELATIONSHIPS" && specialtyRefinedFromVector) {
-                    console.log(`ℹ Enrichment: Skipping because we already refined specialty from vector to '${route.params.specialtyName}'. Not overriding with potentially corrupted extraction.`);
-                    enrichFn = null;
-                } else if (entity === "RELATIONSHIPS" && !primarySearchFailed) {
-                    console.log(`ℹ Enrichment: Found specialty '${extraction.params.value}' but primary search already handled '${route.params.specialtyName}'. Skipping override.`);
-                    enrichFn = null; // Do not distract
-                } else {
-                    enrichFn = executeSpecialtiesParseQuery;
+            // Normalize to array
+            const entitiesToProcess = extraction.entities || (extraction.entity ? [{ type: extraction.entity, value: extraction.params.value }] : []);
+
+            console.log(`🎯 Extracted ${entitiesToProcess.length} entities from context.`);
+
+            for (const ent of entitiesToProcess) {
+                console.log(`   - Processing: ${ent.type} -> ${ent.value}`);
+
+                let enrichFn;
+                let enrichParams = { value: ent.value };
+
+                // Determine Field based on type/language (approximate for enrichment)
+                const isArabic = /[\u0600-\u06FF]/.test(ent.value);
+                if (ent.type === "HOSPITALS" || ent.type === "SPECIALTIES") {
+                    enrichParams.field = isArabic ? "nameAr" : "nameEn";
+                    enrichParams.includeArabic = true;
+                } else if (ent.type === "DOCTORS") {
+                    enrichParams.field = isArabic ? "fullnameAr" : "fullname";
                 }
-            }
 
-            if (enrichFn) {
-                const enrichResults = await enrichFn(extraction.params, user);
-                if (enrichResults.length > 0) {
-                    console.log(`✨ Enriched context with ${enrichResults.length} structured records.`);
-                    // Prepend structured data to context
-                    contextText = enrichResults.join("\n---\n") + "\n\n=== RELEVANT TEXT SNIPPETS ===\n" + contextText;
+                if (ent.type === "HOSPITALS") enrichFn = executeHospitalParseQuery;
+                else if (ent.type === "DOCTORS") enrichFn = executeDoctorParseQuery;
+                else if (ent.type === "SPECIALTIES") {
+                    // SMART ENRICHMENT Logic reused
+                    const primarySearchFailed = !parseResults || parseResults.length === 0;
+
+                    if (entity === "RELATIONSHIPS" && primarySearchFailed && !specialtyRefinedFromVector) {
+                        // Check if we have a Hospital in the SAME extraction list? 
+                        // For now, assume independent enrichment or simple specialistsAtHospital
+                        console.log("✨ Enrichment Strategy: Found 'SPECIALTIES', searching doctors for it.");
+                        enrichFn = executeRelationshipQuery;
+                        enrichParams = { queryType: "specialistsAtHospital", specialtyName: ent.value };
+                    } else if (entity === "RELATIONSHIPS" && specialtyRefinedFromVector) {
+                        enrichFn = null;
+                    } else if (entity === "RELATIONSHIPS" && !primarySearchFailed) {
+                        enrichFn = null;
+                    } else {
+                        enrichFn = executeSpecialtiesParseQuery;
+                    }
+                }
+
+                if (enrichFn) {
+                    const enrichResults = await enrichFn(enrichParams, user);
+                    if (enrichResults.length > 0) {
+                        console.log(`✨ Enriched context with ${enrichResults.length} structured records for ${ent.type}.`);
+                        contextText = enrichResults.join("\n---\n") + "\n\n=== RELEVANT TEXT SNIPPETS ===\n" + contextText;
+                    }
                 }
             }
         }

@@ -17,6 +17,7 @@ import fetch, { Headers, Request, Response } from 'node-fetch';
 import Parse from "parse/node.js";
 import ollama from "ollama";
 import { QdrantClient } from "@qdrant/js-client-rest";
+import { Client } from "@opensearch-project/opensearch"; // Added OpenSearch
 import { randomUUID } from "crypto";
 import fs from 'fs';
 import path from 'path';
@@ -45,6 +46,11 @@ const PARSE_CLASS_DOCTORS = "Doctors";
 const PARSE_CLASS_SPECIALTIES = "Specialties";
 
 const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
+const OPENSEARCH_NODE = process.env.OPENSEARCH_NODE || "https://localhost:9200";
+const OPENSEARCH_USERNAME = process.env.OPENSEARCH_USERNAME || "admin";
+const OPENSEARCH_PASSWORD = process.env.OPENSEARCH_PASSWORD || "admin";
+const OPENSEARCH_SSL_INSECURE = process.env.OPENSEARCH_SSL_INSECURE || "true";
+
 const HOSPITALS_COLLECTION = "hospitals_docs";
 const DOCTORS_COLLECTION = "doctors_docs";
 const SPECIALTIES_COLLECTION = "specialties_docs";
@@ -62,6 +68,7 @@ Parse.CoreManager.set('REQUEST_HEADERS', {
 });
 
 function fixEncoding(str) {
+  // ... existing fixEncoding code ...
   // Manually map Windows-1252 characters that aren't in Latin-1
   // to their byte values.
   const win1252Map = {
@@ -103,6 +110,22 @@ function fixEncoding(str) {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+// -----------------------------------------
+// HELPER: ARABIC NORMALIZER
+// -----------------------------------------
+function normalizeArabicMedical(text) {
+  if (!text) return "";
+  return text
+    .replace(/[\u064B-\u065F]/g, '') // remove diacritics
+    .replace(/[إأآٱ]/g, 'ا') // normalize alef
+    .replace(/ى/g, 'ي') // normalize ya
+    .replace(/ة/g, 'ه') // normalize ta marbuta
+    .replace(/ـ/g, '') // remove tatweel
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 async function parseLogin() {
   try {
     const user = await Parse.User.logIn(PARSE_USERNAME, PARSE_PASSWORD);
@@ -115,26 +138,29 @@ async function parseLogin() {
 }
 
 // -----------------------------------------
-// INIT CHROMA
-// -----------------------------------------
-// -----------------------------------------
-// INIT QDRANT
+// INIT CLIENTS
 // -----------------------------------------
 const qdrant = new QdrantClient({ url: QDRANT_URL });
+const clientOS = new Client({
+  node: OPENSEARCH_NODE,
+  auth: {
+    username: OPENSEARCH_USERNAME,
+    password: OPENSEARCH_PASSWORD,
+  },
+  ssl: {
+    rejectUnauthorized: OPENSEARCH_SSL_INSECURE !== "true",
+  },
+});
 
 // -----------------------------------------
 // EMBEDDINGS
 // -----------------------------------------
 async function embed(text) {
   // Truncate to safe limit for mxbai-embed-large (512 tokens)
-
   const res = await ollama.embeddings({
     model: EMBED_MODEL,
     prompt: text,
   });
-
-  // console.log(`Embedding: ${res.embedding}  `);
-
   return res.embedding;
 }
 
@@ -283,6 +309,18 @@ NOTE: If the user asks "doctors in [Hospital Name]" WITHOUT mentioning symptoms,
 
 ----------------------
 
+8. If the user asks to COMPARE two doctors:
+   Example: "Compare Dr. Ahmed and Dr. Mohamed" or "قارن بين د. احمد و د. محمد"
+   → Use: "operation": "parse_search"
+   → entity: "RELATIONSHIPS"
+   → params: { 
+       "queryType": "specialtiesComparison",
+       "doctor1Name": "<Name 1>",
+       "doctor2Name": "<Name 2>"
+     }
+
+----------------------
+
 DATABASE SCHEMA (For "params" extraction):
 ${schemaContext}
 
@@ -304,6 +342,7 @@ Schema for PARSE Params:
     - "hospitalsForDoctor": Use when user asks which hospitals a specific doctor works at
     - "specialtiesAtHospital": Use when user asks what specialties a hospital has
     - "specialtiesForDoctor": Use when user asks what specialties a doctor has
+    - "specialtiesComparison": Use when user asks to compare two doctors
 - value: <extracted name or pattern>. IMPORTANT: 
     - For hospital names, remove generic suffixes like 'Hospital', 'Center', 'Clinic', 'مستشفى' to improve partial matching (e.g., output "German" instead of "German Hospital").
     - Keep the value in its original language (Arabic or English) - DO NOT translate.
@@ -383,6 +422,10 @@ Example 11 (All Specialties):
 Query: "عايز كل التخصصات"
 Output: { "operation": "parse_search", "query": "all specialties", "follow_up": false, "entity": "SPECIALTIES", "params": { "queryType": "allSpecialties" } }
 
+Example 12 (Comparison):
+Query: "قارن بين د. محمد و د. احمد"
+Output: { "operation": "parse_search", "query": "compare Dr. Mohamed and Dr. Ahmed", "follow_up": false, "entity": "RELATIONSHIPS", "params": { "queryType": "specialtiesComparison", "doctor1Name": "محمد", "doctor2Name": "احمد", "includeArabic": true } }
+
 Query: "${query}"
 Output:
   `.trim();
@@ -430,7 +473,7 @@ async function executeHospitalParseQuery(params, user) {
     console.log("🔍 Fetching ALL hospitals...");
     query.limit(100);
   } else {
-    query.limit(15);
+    query.limit(20);
   }
 
   if (params.field && params.value) {
@@ -479,7 +522,7 @@ async function executeDoctorParseQuery(params, user) {
     query.matches(params.field, searchPattern);
   }
 
-  query.limit(15);
+  query.limit(20);
 
   const results = await query.find({ sessionToken: user.getSessionToken() });
 
@@ -517,7 +560,7 @@ async function executeSpecialtiesParseQuery(params, user) {
     console.log("🔍 Fetching ALL specialties...");
     query.limit(100);
   } else {
-    query.limit(15);
+    query.limit(20);
   }
 
   if (params.field && params.value) {
@@ -816,21 +859,49 @@ Hospital Address: ${hospital ? hospital.get("addressEn") : "Unknown"}
 // INGESTION
 // -----------------------------------------
 
-async function ingestHospitalsToQdrant(user) {
-  console.log("Recreating collection:", HOSPITALS_COLLECTION);
-  try {
-    await qdrant.deleteCollection(HOSPITALS_COLLECTION);
-  } catch (e) {
-    // ignore if not exists
-  }
 
+async function ensureOpenSearchIndex(indexName) {
   try {
-    await qdrant.createCollection(HOSPITALS_COLLECTION, {
-      vectors: { size: 4096, distance: "Cosine" }, // mxbai-embed-large size
+    const exists = await clientOS.indices.exists({ index: indexName });
+    if (exists.body) {
+      console.log(`[OpenSearch] Deleting existing index: ${indexName}`);
+      await clientOS.indices.delete({ index: indexName });
+    }
+
+    console.log(`[OpenSearch] Creating index: ${indexName}`);
+    await clientOS.indices.create({
+      index: indexName,
+      body: {
+        settings: { number_of_shards: 1, number_of_replicas: 0 },
+        mappings: {
+          properties: {
+            text: { type: "text", analyzer: "standard" },
+            nameEn: { type: "text", analyzer: "standard" },
+            nameAr: { type: "text", analyzer: "standard" },
+            title: { type: "text", analyzer: "standard" },
+            hospitalType: { type: "keyword" }
+          }
+        }
+      }
     });
   } catch (e) {
-    console.error("Error creating collection:", e);
+    console.warn(`[OpenSearch] Index check/create failed for ${indexName}:`, e.message);
   }
+}
+
+async function ingestHospitalsToQdrant(user) {
+  console.log("Recreating collection:", HOSPITALS_COLLECTION);
+
+  // Qdrant Init
+  try { await qdrant.deleteCollection(HOSPITALS_COLLECTION); } catch (e) { }
+  try {
+    await qdrant.createCollection(HOSPITALS_COLLECTION, {
+      vectors: { size: 4096, distance: "Cosine" },
+    });
+  } catch (e) { console.error("Error creating Qdrant collection:", e); }
+
+  // OpenSearch Init
+  await ensureOpenSearchIndex(HOSPITALS_COLLECTION);
 
   const Hospitals = Parse.Object.extend(PARSE_CLASS_HOSPITALS);
   const query = new Parse.Query(Hospitals);
@@ -840,6 +911,8 @@ async function ingestHospitalsToQdrant(user) {
   console.log(`Found ${results.length} hospitals to ingest...`);
 
   const points = [];
+  const osDocs = [];
+
   for (const obj of results) {
     const text = `
 Hospital: ${obj.get("nameEn") || "Unknown"}
@@ -853,6 +926,8 @@ Working Hours: ${obj.get("workingDaysHrs") || "Unknown"}
     `.trim();
 
     const embedding = await embed(text);
+
+    // Qdrant Point
     points.push({
       id: randomUUID(),
       vector: embedding,
@@ -867,31 +942,44 @@ Working Hours: ${obj.get("workingDaysHrs") || "Unknown"}
         Description_Ar: fixEncoding(obj.get("descAr") || "")
       }
     });
+
+    // OpenSearch Doc
+    osDocs.push({ index: { _index: HOSPITALS_COLLECTION, _id: obj.id } });
+    osDocs.push({
+      text: text,
+      nameEn: obj.get("nameEn"),
+      nameAr: fixEncoding(obj.get("nameAr") || ""),
+      type_Hospital: obj.get("hospitalType"),
+      address: obj.get("addressEn"),
+      descEn: obj.get("descEn")
+    });
+
     process.stdout.write(".");
   }
 
   console.log("\nUpserting hospitals...");
   if (points.length > 0) {
     await qdrant.upsert(HOSPITALS_COLLECTION, { points });
+    try {
+      const { body: bulkResponse } = await clientOS.bulk({ refresh: true, body: osDocs });
+      if (bulkResponse.errors) console.log("⚠️ OpenSearch Bulk had errors");
+      else console.log(`✅ Indexed ${points.length} docs to OpenSearch`);
+    } catch (e) {
+      console.error("❌ OpenSearch Bulk Failed:", e.message);
+    }
   }
   console.log("Done ingesting hospitals.");
 }
 
 async function ingestDoctorsToQdrant(user) {
   console.log("Recreating collection:", DOCTORS_COLLECTION);
+  try { await qdrant.deleteCollection(DOCTORS_COLLECTION); } catch (e) { }
   try {
-    await qdrant.deleteCollection(DOCTORS_COLLECTION);
-  } catch (e) {
-    // ignore
-  }
+    await qdrant.createCollection(DOCTORS_COLLECTION, { vectors: { size: 4096, distance: "Cosine" } });
+  } catch (e) { console.error("Error creating collection:", e); }
 
-  try {
-    await qdrant.createCollection(DOCTORS_COLLECTION, {
-      vectors: { size: 4096, distance: "Cosine" },
-    });
-  } catch (e) {
-    console.error("Error creating collection:", e);
-  }
+  // OpenSearch Init
+  await ensureOpenSearchIndex(DOCTORS_COLLECTION);
 
   const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
   const query = new Parse.Query(Doctors);
@@ -901,6 +989,8 @@ async function ingestDoctorsToQdrant(user) {
   console.log(`Found ${results.length} doctors to ingest...`);
 
   const points = [];
+  const osDocs = [];
+
   for (const obj of results) {
     const text = `
 Doctor: ${obj.get("fullname") || "Unknown"}
@@ -916,6 +1006,7 @@ Rating: ${obj.get("averageRating") || "Unknown"}
     `.trim();
 
     const embedding = await embed(text);
+    // Qdrant Point
     points.push({
       id: randomUUID(),
       vector: embedding,
@@ -925,30 +1016,46 @@ Rating: ${obj.get("averageRating") || "Unknown"}
         type: "DOCTOR"
       }
     });
+
+    // OpenSearch Doc
+    osDocs.push({ index: { _index: DOCTORS_COLLECTION, _id: obj.id } });
+    osDocs.push({
+      text: text,
+      fullname: obj.get("fullname"),
+      fullnameAr: fixEncoding(obj.get("fullnameAr") || ""),
+      title: obj.get("title"),
+      positionEn: obj.get("positionEn"),
+      qualificationsEn: obj.get("qualificationsEn"),
+      // Map main name fields for standardized search
+      nameEn: obj.get("fullname"),
+      nameAr: fixEncoding(obj.get("fullnameAr") || "")
+    });
+
     process.stdout.write(".");
   }
   console.log("\nUpserting doctors...");
   if (points.length > 0) {
     await qdrant.upsert(DOCTORS_COLLECTION, { points });
+    try {
+      const { body: bulkResponse } = await clientOS.bulk({ refresh: true, body: osDocs });
+      if (bulkResponse.errors) console.log("⚠️ OpenSearch Bulk had errors");
+      else console.log(`✅ Indexed ${points.length} docs to OpenSearch`);
+    } catch (e) {
+      console.error("❌ OpenSearch Bulk Failed:", e.message);
+    }
   }
   console.log("Done ingesting doctors.");
 }
 
 async function ingestSpecialtiesToQdrant(user) {
   console.log("Recreating collection:", SPECIALTIES_COLLECTION);
+  try { await qdrant.deleteCollection(SPECIALTIES_COLLECTION); } catch (e) { }
   try {
-    await qdrant.deleteCollection(SPECIALTIES_COLLECTION);
-  } catch (e) {
-    // ignore
-  }
+    await qdrant.createCollection(SPECIALTIES_COLLECTION, { vectors: { size: 4096, distance: "Cosine" } });
+  } catch (e) { console.error("Error creating collection:", e); }
 
-  try {
-    await qdrant.createCollection(SPECIALTIES_COLLECTION, {
-      vectors: { size: 4096, distance: "Cosine" },
-    });
-  } catch (e) {
-    console.error("Error creating collection:", e);
-  }
+  // OpenSearch Init
+  await ensureOpenSearchIndex(SPECIALTIES_COLLECTION);
 
   const Specialties = Parse.Object.extend(PARSE_CLASS_SPECIALTIES);
   const query = new Parse.Query(Specialties);
@@ -958,6 +1065,8 @@ async function ingestSpecialtiesToQdrant(user) {
   console.log(`Found ${results.length} specialties to ingest...`);
 
   const points = [];
+  const osDocs = [];
+
   for (const obj of results) {
     const text = `
 ${obj.get("nameEn") || "Unknown"}
@@ -965,6 +1074,7 @@ ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
     `.trim();
 
     const embedding = await embed(text);
+    // Qdrant Point
     points.push({
       id: randomUUID(),
       vector: embedding,
@@ -974,11 +1084,27 @@ ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
         type: "SPECIALTY"
       }
     });
+
+    // OpenSearch Doc
+    osDocs.push({ index: { _index: SPECIALTIES_COLLECTION, _id: obj.id } });
+    osDocs.push({
+      text: text,
+      nameEn: obj.get("nameEn"),
+      nameAr: fixEncoding(obj.get("nameAr") || "")
+    });
+
     process.stdout.write(".");
   }
   console.log("\nUpserting specialties...");
   if (points.length > 0) {
     await qdrant.upsert(SPECIALTIES_COLLECTION, { points });
+    try {
+      const { body: bulkResponse } = await clientOS.bulk({ refresh: true, body: osDocs });
+      if (bulkResponse.errors) console.log("⚠️ OpenSearch Bulk had errors");
+      else console.log(`✅ Indexed ${points.length} docs to OpenSearch`);
+    } catch (e) {
+      console.error("❌ OpenSearch Bulk Failed:", e.message);
+    }
   }
   console.log("Done ingesting specialties.");
 }
@@ -987,37 +1113,99 @@ ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
 // IMPROVED VECTOR SEARCH
 // -----------------------------------------
 
+// Helper: Hybrid Merge Strategy (Weighted Score Fuse)
+function hybridMerge(bm25Results, vectorResults) {
+  const map = new Map();
+
+  // Process BM25 Results (OpenSearch)
+  bm25Results.forEach(r => {
+    // Normalizing max score could be better, but using raw score * 0.6 as per request
+    const score = (r._score || 0) * 0.6;
+    map.set(r._id, { ...r._source, score, matchType: ['bm25'] });
+  });
+
+  // Process Vector Results (Qdrant)
+  vectorResults.forEach(r => {
+    // FIX: Use parse_id to match OpenSearch _id
+    const id = r.payload?.parse_id || r.payload?.mongoId || r.id;
+
+    // Qdrant scores are usually Cosine (0-1), OpenSearch scores are unbounded BM25.
+    // We might need to normalize Qdrant score to scale. Let's assume simple weight for now.
+    const score = (r.score || 0) * 0.4;
+
+    if (map.has(id)) {
+      const entry = map.get(id);
+      entry.score += score;
+      entry.matchType.push('vector');
+    } else {
+      map.set(id, { ...r.payload, score, matchType: ['vector'] });
+    }
+  });
+
+  return [...map.values()].sort((a, b) => b.score - a.score);
+}
+
+// -----------------------------------------
+// IMPROVED VECTOR SEARCH (HYBRID)
+// -----------------------------------------
+
 async function performVectorSearch(query, collection, limit = 5, scoreThreshold = 0.5) {
-  console.log(`🔍 Performing vector search on ${collection}`);
+  const normalizedQuery = normalizeArabicMedical(query);
+  console.log(`🔍 Performing Hybrid Search on ${collection} for: "${normalizedQuery}"`);
 
-  // Generate embedding for the query
-  const vector = await embed(query);
+  const searchLimit = limit * 2; // Fetch more for better intersection
 
-  // Search with higher limit to get more candidates
-  const results = await qdrant.search(collection, {
-    vector,
-    limit: limit * 2,  // Get more results for filtering
-    score_threshold: scoreThreshold  // Only get results above threshold
-  });
+  // 1. Generate Vector
+  const vectorPromise = embed(query);
 
-  // Filter and deduplicate results
-  const seen = new Set();
-  const filtered = results
-    .filter(r => {
-      const id = r.payload.parse_id;
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    })
-    .slice(0, limit);  // Take top N after deduplication
+  // 2. Parallel Search Execution
+  try {
+    const [vector, bm25Res] = await Promise.all([
+      vectorPromise,
+      clientOS.search({
+        index: collection, // Ensure OS index names match Qdrant collection names
+        body: {
+          size: searchLimit,
+          query: {
+            multi_match: {
+              query: normalizedQuery,
+              fields: ['text^2', 'nameAr', 'nameEn', 'title'], // Search across relevant text fields
+              fuzziness: "AUTO"
+            }
+          }
+        }
+      }).catch(e => {
+        console.error("OpenSearch BM25 Failed:", e.message);
+        return { body: { hits: { hits: [] } } };
+      })
+    ]);
 
-  console.log(`📊 Vector search found ${filtered.length} unique results (score threshold: ${scoreThreshold})`);
+    const vectorRes = await qdrant.search(collection, {
+      vector: vector,
+      limit: searchLimit,
+      score_threshold: scoreThreshold
+    }).catch(e => {
+      console.error("Qdrant Vector Search Failed:", e.message);
+      return [];
+    });
 
-  filtered.forEach((r, i) => {
-    console.log(`   ➤ Result ${i + 1}: Similarity ${(r.score * 100).toFixed(2)}%`);
-  });
+    const bm25Hits = bm25Res.body.hits.hits;
+    console.log(`📊 Raw Results: OpenSearch(BM25)=${bm25Hits.length}, Qdrant(Vector)=${vectorRes.length}`);
 
-  return filtered.map(r => r.payload.text);
+    // 3. Fusion
+    const fusedResults = hybridMerge(bm25Hits, vectorRes).slice(0, limit);
+
+    console.log(`🤝 Hybrid Fusion yielded ${fusedResults.length} unique results.`);
+    fusedResults.forEach((r, i) => {
+      console.log(` ${fixEncoding(r.text || r.name)} ➤ Score: ${r.score.toFixed(4)} [${r.matchType.join('+')}]`);
+    });
+
+    return fusedResults.map(r => r.text);
+
+  } catch (e) {
+    console.error("Hybrid Search Error:", e);
+    return [];
+  }
 }
 
 async function extractEntityFromContext(question, contextChunks) {
