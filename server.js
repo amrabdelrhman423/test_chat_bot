@@ -1,7 +1,17 @@
 import XHR2 from 'xhr2';
 import 'dotenv/config';
 
+import { FormData } from 'formdata-node';
+import fetch, { Headers, Request, Response } from 'node-fetch';
+import { ReadableStream } from 'stream/web';
+
 global.XMLHttpRequest = XHR2;
+global.fetch = fetch;
+global.Headers = Headers;
+global.Request = Request;
+global.Response = Response;
+global.FormData = FormData;
+global.ReadableStream = ReadableStream;
 
 // Configure XHR2 to use UTF-8 charset
 XHR2.prototype._setRequestHeader = XHR2.prototype.setRequestHeader;
