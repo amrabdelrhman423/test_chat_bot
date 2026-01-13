@@ -16,6 +16,14 @@ import { FormData } from 'formdata-node';
 import fetch, { Headers, Request, Response } from 'node-fetch';
 import Parse from "parse/node.js";
 import ollama from "ollama";
+import { HfInference } from '@huggingface/inference';
+import { pipeline } from '@xenova/transformers';
+
+// Polyfills for Node.js < 18
+global.fetch = fetch;
+global.Headers = Headers;
+global.Request = Request;
+global.Response = Response;
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { Client } from "@opensearch-project/opensearch"; // Added OpenSearch
 import { randomUUID } from "crypto";
@@ -44,6 +52,8 @@ const PARSE_PASSWORD = process.env.PARSE_PASSWORD || "12345678";
 const PARSE_CLASS_HOSPITALS = "Hospitals";
 const PARSE_CLASS_DOCTORS = "Doctors";
 const PARSE_CLASS_SPECIALTIES = "Specialties";
+const PARSE_CLASS_CITIES = "Cities";
+const PARSE_CLASS_AREAS = "Areas";
 
 const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
 const OPENSEARCH_NODE = process.env.OPENSEARCH_NODE || "https://localhost:9200";
@@ -54,8 +64,12 @@ const OPENSEARCH_SSL_INSECURE = process.env.OPENSEARCH_SSL_INSECURE || "true";
 const HOSPITALS_COLLECTION = "hospitals_docs";
 const DOCTORS_COLLECTION = "doctors_docs";
 const SPECIALTIES_COLLECTION = "specialties_docs";
+const CITIES_COLLECTION = "cities_docs";
+const AREAS_COLLECTION = "areas_docs";
 
-const EMBED_MODEL = process.env.EMBED_MODEL || "qwen3-embedding";
+const EMBED_MODEL = "jinaai/jina-embeddings-v3";
+const HF_TOKEN = process.env.HF_TOKEN;
+const hf = new HfInference(HF_TOKEN);
 const LLM_MODEL = process.env.LLM_MODEL || "llama3.1";
 
 // -----------------------------------------
@@ -133,7 +147,7 @@ async function parseLogin() {
     return user;
   } catch (error) {
     console.error("❌ Parse Login Error:", error.message);
-    process.exit(1);
+    // process.exit(1);
   }
 }
 
@@ -152,16 +166,63 @@ const clientOS = new Client({
   },
 });
 
-// -----------------------------------------
-// EMBEDDINGS
-// -----------------------------------------
-async function embed(text) {
-  // Truncate to safe limit for mxbai-embed-large (512 tokens)
-  const res = await ollama.embeddings({
-    model: EMBED_MODEL,
-    prompt: text,
-  });
-  return res.embedding;
+let localEmbedder = null;
+
+async function embed(text, task = "retrieval.query") {
+  // 1. Try Local Jina v3 FastAPI Server
+  try {
+    console.log(`🔍 Generating Jina v3 embedding (1024 dims) via LOCAL SERVER for: "${text.substring(0, 30)}..."`);
+    const response = await fetch("http://localhost:8000/v1/embeddings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: text, task: task })
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      if (result.data && result.data[0].embedding) {
+        const vector = result.data[0].embedding;
+        if (vector.length !== 1024) {
+          console.warn(`⚠️ Local Jina server returned ${vector.length} dims, expected 1024!`);
+        }
+        return vector;
+      }
+    }
+    console.warn("⚠️ Local Jina server returned error or invalid format, trying HF...");
+  } catch (err) {
+    console.warn("⚠️ Local Jina server unreachable, trying HF...");
+  }
+
+  try {
+    // 2. Try Jina v3 via Hugging Face SDK
+    console.log(`🔍 Generating Jina v3 embedding (1024 dims) via HF SDK for: "${text.substring(0, 30)}..."`);
+    const result = await hf.featureExtraction({
+      model: EMBED_MODEL,
+      inputs: text,
+      parameters: { task: task }
+    });
+
+    // HF SDK handles different return formats
+    if (Array.isArray(result)) return result;
+    if (result.data) return result.data;
+    return result;
+
+  } catch (error) {
+    console.warn("⚠️ Jina v3 SDK failed, falling back to local 768 model:", error.message);
+
+    // 3. Fallback to Local Multilingual Model (768 dims)
+    try {
+      if (!localEmbedder) {
+        const LOCAL_MODEL = "Xenova/paraphrase-multilingual-mpnet-base-v2";
+        localEmbedder = await pipeline('feature-extraction', LOCAL_MODEL);
+      }
+      const output = await localEmbedder(text, { pooling: 'mean', normalize: true });
+      return Array.from(output.data);
+    } catch (localErr) {
+      console.error("❌ All embedding methods failed:", localErr.message);
+      throw localErr;
+    }
+  }
 }
 
 // -----------------------------------------
@@ -183,7 +244,7 @@ function loadSchema() {
     const schemaRaw = fs.readFileSync(schemaPath, 'utf8');
     const schemaJson = JSON.parse(schemaRaw);
 
-    const targetClasses = ["Hospitals", "Doctors", "Specialties", "HospitalDoctorSpecialty"];
+    const targetClasses = ["Hospitals", "Doctors", "Specialties", "HospitalDoctorSpecialty", "Cities", "Areas"];
     let schemaSummary = "";
 
     schemaJson.forEach(cls => {
@@ -244,6 +305,8 @@ Always set "follow_up": true so we suggest doctors/hospitals after.
    - If asking about "doctors IN/AT a hospital" or "hospitals FOR a doctor" → Use entity: "RELATIONSHIPS" (see examples below)
    - If asking about a doctor's NAME, qualifications, or info → Use entity: "DOCTORS"
    - If asking about a hospital's NAME, address, or info → Use entity: "HOSPITALS"
+   - If asking about a city or location info → Use entity: "CITIES"
+   - If asking about a specific area or district info → Use entity: "AREAS"
 
 → Use: "operation": "parse_search"
 You MUST also extract the "entity" and "params" following the schema below.
@@ -274,8 +337,35 @@ ARABIC SPECIALTY MAPPING (Use these English names for "specialtyName"):
 - "أسنان" -> "Dentistry"
 - "نفسي" -> "Psychiatry"
 - "مخ وأعصاب" -> "Neurology"
+- "مناظير", "تنظير", "Endoscopy" -> "Endoscopy"
+
+341. PRICE & COST RULES:
+   - If the user asks for "price", "cost", "fees", "سعر", "بكام", "تكلفة" of a DOCTOR:
+   - Entity: "RELATIONSHIPS"
+   - Operation: "combined"
+   - Params: { "queryType": "hospitalsForDoctor", "fullname": <FULL NAME STRING> }
+   - Example: "سعر دكتورة فاطيمة حسن" -> params: { "queryType": "hospitalsForDoctor", "fullname": "فاطيمة حسن" }
+
+342. LOCATION NULL RULE (CRITICAL):
+   - If the user does NOT explicitly mention a city, area, or region, you MUST set 'location': null in the 'params' object.
+   - If the user does NOT explicitly mention a city, area, or region, you MUST set 'location': null in the 'params' object.
+   - NEVER guess or infer a location based on other context.
+
+343. DOCTOR NAME NULL RULE:
+   - If the user does NOT explicitly mention a specific doctor's name, 'doctorName' and 'fullname' MUST be null.
+   - Do NOT infer a name from the hospital or specialty.
+
+344. EXCLUSION/NEGATIVE RULE:
+   - If the user uses "غير" (other than), "مش" (not), "other", "another", "change" followed by a name:
+   - Extract that name into 'excludeFullname'.
+   - Example: "غير دكتور المستقبل" -> params: { "excludeFullname": "المستقبل", "doctorName": null }
 
 NOTE: If the user asks "doctors in [Hospital Name]" WITHOUT mentioning symptoms, use "parse_search" with "doctorsAtHospital", NOT "combined".
+1. **RELATIONSHIPS RULE**:
+   - IF entity = "RELATIONSHIPS"
+   - THEN operation MUST be "combined"
+   - AND follow_up MUST be true
+   - (Exception: For "allDoctors", "allHospitals", "allSpecialties", "allCities", "allAreas", you MAY use operation: "parse_search" with follow_up: false)
 
 ----------------------
 
@@ -287,6 +377,8 @@ NOTE: If the user asks "doctors in [Hospital Name]" WITHOUT mentioning symptoms,
 ----------------------
 
 5. If the user asks for "ALL doctors" or "list all doctors" or "عايز كل الدكاترة" or "Show me all doctors":
+   - WARNING: Do NOT use this if the user names a specific doctor (e.g. "Dr. Ahmed"). In that case, use "hospitalsForDoctor".
+   - NOTE: If the user asks for "ALL doctors" of a specific SPECIALTY, include "specialtyName".
    → Use: "operation": "parse_search"
    → entity: "RELATIONSHIPS"
    → params: { "queryType": "allDoctors" }
@@ -325,10 +417,11 @@ DATABASE SCHEMA (For "params" extraction):
 ${schemaContext}
 
 Schema for PARSE Params:
-- entity: "HOSPITALS" or "DOCTORS" or "SPECIALTIES" or "RELATIONSHIPS"
+- entity: "HOSPITALS" or "DOCTORS" or "SPECIALTIES" or "RELATIONSHIPS" or "CITIES" or "AREAS"
 - field: The database column to FILTER by. CHOOSE INTELLIGENTLY:
-    - If user mentions LOCATION/ADDRESS keywords ("in Zamalek", "at Cairo", "في الزمالك", "address", "location", "area", "district"), use "addressEn" for hospitals
-    - If user asks for a SPECIFIC HOSPITAL BY NAME:
+    - If user mentions LOCATION/ADDRESS keywords ("in Zamalek", "at Cairo", "في الزمالك", "address", "location", "area", "district", "city", "Alexandria"), use "addressEn" for hospitals.
+    - CRITICAL: City names (Alexandria, Cairo, Giza, etc) ARE NOT hospital names. Use entity: "HOSPITALS" and field: "addressEn" for these.
+    - If user asks for a SPECIFIC HOSPITAL BY NAME (e.g., Al-Amal, German):
         - If the name is in ARABIC (e.g., "حورس", "الألماني", "دار الفؤاد"), use "nameAr"
         - If the name is in ENGLISH (e.g., "German", "Horus"), use "nameEn"
     - If user asks for hospital TYPE ("specialized", "general"), use "hospitalType"
@@ -337,9 +430,9 @@ Schema for PARSE Params:
         - If the name is in ENGLISH, use "fullname"
     - CRITICAL: If the user asks for an attribute (like description, address, phone) of a SPECIFIC named entity (e.g., "descAr for Hospital X"), you MUST filter by the NAME field ("nameEn"/"nameAr" for hospitals, "fullname"/"fullnameAr" for doctors), NOT the attribute field.
 - For RELATIONSHIPS queryType:
-    - "doctorsAtHospital": Use when user asks for "doctors in/at [Hospital]" WITHOUT specifying a specialty
+    - "doctorsAtHospital": Use when user asks for "doctors in/at [Hospital]". If doctor is mentioned, MUST include "doctorName" AND "fullname".
     - "specialistsAtHospital": Use ONLY when user specifies BOTH a specialty AND a hospital (e.g., "cardiologists at Hospital X")
-    - "hospitalsForDoctor": Use when user asks which hospitals a specific doctor works at
+    - "hospitalsForDoctor": Use when user asks which hospitals a specific doctor works at OR Price. MUST include "doctorName" AND "fullname".
     - "specialtiesAtHospital": Use when user asks what specialties a hospital has
     - "specialtiesForDoctor": Use when user asks what specialties a doctor has
     - "specialtiesComparison": Use when user asks to compare two doctors
@@ -416,15 +509,35 @@ Output: { "operation": "parse_search", "query": "all doctors", "follow_up": fals
 
 Example 10 (All Hospitals):
 Query: "عايز كل المستشفيات"
-Output: { "operation": "parse_search", "query": "all hospitals", "follow_up": false, "entity": "HOSPITALS", "params": { "queryType": "allHospitals" } }
+Output: { "operation": "parse_search", "query": "all hospitals", "follow_up": false, "entity": "RELATIONSHIPS", "params": { "queryType": "allHospitals" } }
 
 Example 11 (All Specialties):
 Query: "عايز كل التخصصات"
-Output: { "operation": "parse_search", "query": "all specialties", "follow_up": false, "entity": "SPECIALTIES", "params": { "queryType": "allSpecialties" } }
+Output: { "operation": "parse_search", "query": "all specialties", "follow_up": false, "entity": "RELATIONSHIPS", "params": { "queryType": "allSpecialties" } }
+
+Example 11b (All Cities):
+Query: "What are the cities in the database?"
+Output: { "operation": "parse_search", "query": "all cities", "follow_up": false, "entity": "RELATIONSHIPS", "params": { "queryType": "allCities" } }
+
+Example 11c (All Areas):
+Query: "قائمة المناطق"
+Output: { "operation": "parse_search", "query": "all areas", "follow_up": false, "entity": "RELATIONSHIPS", "params": { "queryType": "allAreas", "includeArabic": true } }
 
 Example 12 (Comparison):
 Query: "قارن بين د. محمد و د. احمد"
 Output: { "operation": "parse_search", "query": "compare Dr. Mohamed and Dr. Ahmed", "follow_up": false, "entity": "RELATIONSHIPS", "params": { "queryType": "specialtiesComparison", "doctor1Name": "محمد", "doctor2Name": "احمد", "includeArabic": true } }
+
+Example 13 (Location-based Hospitals):
+Query: "Hospitals in Alexandria"
+Output: { "operation": "parse_search", "query": "Hospitals in Alexandria", "follow_up": false, "entity": "HOSPITALS", "params": { "field": "addressEn", "value": "Alexandria" } }
+
+Example 14 (Price with Fullname):
+Query: "عايز سعر دكتورة فاطيمة حسن"
+Output: { "operation": "combined", "entity": "RELATIONSHIPS", "params": { "queryType": "hospitalsForDoctor", "fullname": "فاطيمة حسن", "doctorName": "فاطيمة حسن" } }
+
+Example 15 (All Doctors with Specialty):
+Query: "عايز كل دكاترة طب الاطفال"
+Output: { "operation": "combined", "entity": "RELATIONSHIPS", "params": { "queryType": "allDoctors", "specialtyName": "Pediatrics" } }
 
 Query: "${query}"
 Output:
@@ -440,6 +553,27 @@ Output:
 
     const result = JSON.parse(fixEncoding(response.response));
     console.log("🤖 Router Decision:", result);
+
+    // 🔧 FIX: Sync doctorName and fullname to ensure 'fullname' param exists
+    if (result.params) {
+      if (result.params.excludeFullname) {
+        console.log(`🚫 EXCLUSION DETECTED: removing doctorName/fullname matching "${result.params.excludeFullname}"`);
+        result.params.doctorName = null;
+        result.params.fullname = null;
+      }
+
+      if (result.params.doctorName && !result.params.fullname) {
+        result.params.fullname = result.params.doctorName;
+      }
+      else if (result.params.fullname && !result.params.doctorName) {
+        result.params.doctorName = result.params.fullname;
+      }
+    }
+
+    // 🔧 FINAL SAFEGUARD: Ensure location is null if not asked
+    if (result.params && (result.params.location === undefined || result.params.location === "")) {
+      result.params.location = null;
+    }
 
     // Compatibility mapping
     if (!result.entity && result.operation === "vector_search") {
@@ -459,15 +593,18 @@ function escapeRegex(str) {
 function cleanSearchTerm(term) {
   if (!term) return "";
   // Remove generic terms to improve matching
-  // e.g. "Ain Shams Hospital" -> "Ain Shams"
-  // "Dr. Ahmed" -> "Ahmed"
-  return term.replace(/\b(Hospital|Hospitals|Clinic|Clinics|Center|Centers|Centre|Centres|Dr|Doctor|Doctors)\.?\b/gi, "").trim();
+  // English: Hospital, Dr, City, Governorate
+  // Arabic: مستشفى, دكتور, محافظة, مدينة
+  return term.replace(/\b(Hospital|Hospitals|Clinic|Clinics|Center|Centers|Centre|Centres|Dr|Doctor|Doctors|City|Governorate)\.?\b/gi, "")
+    .replace(/^(د\.|دكتور|دكتورة|مستشفى|عيادة|مركز|محافظة|مدينة|حي|منطقة)\s+/g, "")
+    .trim();
 }
 
 async function executeHospitalParseQuery(params, user) {
   console.log("🔍 Executing Hospital Parse Query:", params);
   const Hospitals = Parse.Object.extend(PARSE_CLASS_HOSPITALS);
   const query = new Parse.Query(Hospitals);
+  query.notEqualTo("isDeleted", true);
 
   if (params.queryType === "allHospitals") {
     console.log("🔍 Fetching ALL hospitals...");
@@ -476,13 +613,67 @@ async function executeHospitalParseQuery(params, user) {
     query.limit(20);
   }
 
-  if (params.field && params.value) {
-    const cleanedValue = cleanSearchTerm(params.value);
-    console.log(`🧹 Cleaned search term: "${params.value}" -> "${cleanedValue}"`);
+  const searchField = params.field;
+  const searchValue = params.value;
+
+  if (searchField && searchValue) {
+    const cleanedValue = cleanSearchTerm(searchValue);
+    console.log(`🧹 Cleaned search term: "${searchValue}" -> "${cleanedValue}"`);
     const safe = escapeRegex(cleanedValue);
-    // Removed ^ to allow partial matches (e.g. "Shams" -> "Ain Shams")
     const searchPattern = new RegExp(safe, 'i');
-    query.matches(params.field, searchPattern);
+
+    if (searchField === "nameEn" || searchField === "nameAr") {
+      const qEn = new Parse.Query(Hospitals).matches("nameEn", searchPattern);
+      const qAr = new Parse.Query(Hospitals).matches("nameAr", searchPattern);
+      const nameQuery = Parse.Query.or(qEn, qAr);
+      nameQuery.notEqualTo("isDeleted", true);
+      query = nameQuery;
+    } else if (searchField === "addressEn" || searchField === "addressAr") {
+      // 1. Try City Match
+      const Cities = Parse.Object.extend(PARSE_CLASS_CITIES);
+      const cityQueryEn = new Parse.Query(Cities).matches("nameEn", searchPattern);
+      const cityQueryAr = new Parse.Query(Cities).matches("nameAr", searchPattern);
+      const citiesQuery = Parse.Query.or(cityQueryEn, cityQueryAr);
+      citiesQuery.notEqualTo("isDeleted", true);
+      const cities = await citiesQuery.find({ sessionToken: user.getSessionToken() });
+
+      if (cities.length > 0) {
+        console.log(`🏙  City Match Found: ${cities.map(c => c.get('nameEn')).join(', ')}`);
+        const cityIds = cities.map(c => c.id);
+        const Areas = Parse.Object.extend(PARSE_CLASS_AREAS);
+        const areaByCityQuery = new Parse.Query(Areas);
+        areaByCityQuery.containedIn("cityId", cityIds);
+        areaByCityQuery.notEqualTo("isDeleted", true);
+        const areas = await areaByCityQuery.find({ sessionToken: user.getSessionToken() });
+
+        if (areas.length > 0) {
+          const areaIds = areas.map(a => a.id);
+          console.log(`🏘  Found ${areas.length} areas for these cities. Filtering hospitals by areaId...`);
+          query.containedIn("areaId", areaIds);
+        } else {
+          query.matches(searchField, searchPattern);
+        }
+      } else {
+        // 2. Try Area Match directly
+        const Areas = Parse.Object.extend(PARSE_CLASS_AREAS);
+        const areaQueryEn = new Parse.Query(Areas).matches("nameEn", searchPattern);
+        const areaQueryAr = new Parse.Query(Areas).matches("nameAr", searchPattern);
+        const areaQuery = Parse.Query.or(areaQueryEn, areaQueryAr);
+        areaQuery.notEqualTo("isDeleted", true);
+        const areas = await areaQuery.find({ sessionToken: user.getSessionToken() });
+
+        if (areas.length > 0) {
+          const areaIds = areas.map(a => a.id);
+          console.log(`🏘  Area Match Found: ${areas.map(a => a.get('nameEn')).join(', ')}. Filtering hospitals by areaId...`);
+          query.containedIn("areaId", areaIds);
+        } else {
+          // 3. Fallback to direct address regex
+          query.matches(searchField, searchPattern);
+        }
+      }
+    } else {
+      query.matches(searchField, searchPattern);
+    }
   }
 
   const results = await query.find({ sessionToken: user.getSessionToken() });
@@ -513,6 +704,7 @@ async function executeDoctorParseQuery(params, user) {
   console.log("🔍 Executing Doctor Parse Query:", params);
   const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
   const query = new Parse.Query(Doctors);
+  query.notEqualTo("isDeleted", true);
 
   if (params.field && params.value) {
     const cleanedValue = cleanSearchTerm(params.value);
@@ -555,6 +747,7 @@ async function executeSpecialtiesParseQuery(params, user) {
   console.log("🔍 Executing Specialties Parse Query:", params);
   const Specialties = Parse.Object.extend(PARSE_CLASS_SPECIALTIES);
   const query = new Parse.Query(Specialties);
+  query.notEqualTo("isDeleted", true);
 
   if (params.queryType === "allSpecialties") {
     console.log("🔍 Fetching ALL specialties...");
@@ -590,8 +783,67 @@ Arabic Name: ${fixEncoding(obj.get("nameAr") || "Unknown")}`;
   });
 }
 
+async function executeCityParseQuery(params, user) {
+  console.log("🔍 Executing City Parse Query:", params);
+  const Cities = Parse.Object.extend(PARSE_CLASS_CITIES);
+  const query = new Parse.Query(Cities);
+  query.notEqualTo("isDeleted", true);
+  query.limit(20);
+
+  if (params.field && params.value) {
+    const safe = escapeRegex(params.value);
+    const searchPattern = new RegExp(safe, 'i');
+    query.matches(params.field, searchPattern);
+  }
+
+  const results = await query.find({ sessionToken: user.getSessionToken() });
+  if (!results.length) return [];
+
+  const includeArabic = params.includeArabic || false;
+  return results.map(obj => {
+    let output = `City: ${obj.get("nameEn") || "Unknown"}`;
+    if (includeArabic) {
+      output += `\nCity (Ar): ${fixEncoding(obj.get("nameAr") || "Unknown")}`;
+    }
+    return output.trim();
+  });
+}
+
+async function executeAreaParseQuery(params, user) {
+  console.log("🔍 Executing Area Parse Query:", params);
+  const Areas = Parse.Object.extend(PARSE_CLASS_AREAS);
+  const query = new Parse.Query(Areas);
+  query.notEqualTo("isDeleted", true);
+  query.limit(20);
+
+  if (params.field && params.value) {
+    const safe = escapeRegex(params.value);
+    const searchPattern = new RegExp(safe, 'i');
+    query.matches(params.field, searchPattern);
+  }
+
+  const results = await query.find({ sessionToken: user.getSessionToken() });
+  if (!results.length) return [];
+
+  const includeArabic = params.includeArabic || false;
+  return results.map(obj => {
+    let output = `Area: ${obj.get("nameEn") || "Unknown"}`;
+    if (includeArabic) {
+      output += `\nArea (Ar): ${fixEncoding(obj.get("nameAr") || "Unknown")}`;
+    }
+    return output.trim();
+  });
+}
+
 async function executeRelationshipQuery(params, user) {
   console.log("🔍 Executing Relationship Query:", params);
+
+  // 🔧 Custom Request: Support 'fullname' as alias for 'doctorName'
+  if (params.fullname && !params.doctorName) {
+    console.log(`🔄 Aliasing params.fullname "${params.fullname}" to params.doctorName`);
+    params.doctorName = params.fullname;
+  }
+
   const HospitalDoctorSpecialty = Parse.Object.extend("HospitalDoctorSpecialty");
   const query = new Parse.Query(HospitalDoctorSpecialty);
 
@@ -619,13 +871,10 @@ async function executeRelationshipQuery(params, user) {
     const searchPattern = new RegExp(safe, 'i');
 
     // Search in BOTH nameEn and nameAr using OR query
-    const hospitalQueryEn = new Parse.Query(Hospitals);
-    hospitalQueryEn.matches("nameEn", searchPattern);
-
-    const hospitalQueryAr = new Parse.Query(Hospitals);
-    hospitalQueryAr.matches("nameAr", searchPattern);
-
+    const hospitalQueryEn = new Parse.Query(Hospitals).matches("nameEn", searchPattern);
+    const hospitalQueryAr = new Parse.Query(Hospitals).matches("nameAr", searchPattern);
     const hospitalQuery = Parse.Query.or(hospitalQueryEn, hospitalQueryAr);
+    hospitalQuery.notEqualTo("isDeleted", true);
     const hospitals = await hospitalQuery.find({ sessionToken: user.getSessionToken() });
 
     console.log(`🏥 Found ${hospitals.length} hospitals matching "${cleanedHospital}"`);
@@ -642,8 +891,9 @@ async function executeRelationshipQuery(params, user) {
       const doctorQuery = new Parse.Query(Doctors);
       const safeGender = escapeRegex(params.gender);
       const genderPattern = new RegExp(`^${safeGender}`, 'i');
-      doctorQuery.matches("gender", genderPattern);
-      const doctors = await doctorQuery.find({ sessionToken: user.getSessionToken() });
+      const docGenderQuery = new Parse.Query(Doctors).matches("gender", genderPattern);
+      docGenderQuery.notEqualTo("isDeleted", true);
+      const doctors = await docGenderQuery.find({ sessionToken: user.getSessionToken() });
 
       if (doctors.length > 0) {
         const doctorUids = doctors.map(d => d.get("uid"));
@@ -663,8 +913,9 @@ async function executeRelationshipQuery(params, user) {
 
       const safe = escapeRegex(cleanedDoctor);
       const searchPattern = new RegExp(safe, 'i');
-      doctorQuery.matches("fullname", searchPattern);
-      const doctors = await doctorQuery.find({ sessionToken: user.getSessionToken() });
+      const docSearchQuery = new Parse.Query(Doctors).matches("fullname", searchPattern);
+      docSearchQuery.notEqualTo("isDeleted", true);
+      const doctors = await docSearchQuery.find({ sessionToken: user.getSessionToken() });
 
       if (doctors.length > 0) {
         const doctorUids = doctors.map(d => d.get("uid"));
@@ -678,11 +929,11 @@ async function executeRelationshipQuery(params, user) {
       const specialtyQuery = new Parse.Query(Specialties);
 
       const cleanedSpecialty = cleanSearchTerm(params.specialtyName);
-
       const safe = escapeRegex(cleanedSpecialty);
       const searchPattern = new RegExp(safe, 'i');
-      specialtyQuery.matches("nameEn", searchPattern);
-      const specialties = await specialtyQuery.find({ sessionToken: user.getSessionToken() });
+      const specSearchQuery = new Parse.Query(Specialties).matches("nameEn", searchPattern);
+      specSearchQuery.notEqualTo("isDeleted", true);
+      const specialties = await specSearchQuery.find({ sessionToken: user.getSessionToken() });
 
       if (specialties.length > 0) {
         const specialtyIds = specialties.map(s => s.id);
@@ -696,11 +947,11 @@ async function executeRelationshipQuery(params, user) {
     const specialtyQuery = new Parse.Query(Specialties);
 
     const cleanedSpecialty = cleanSearchTerm(params.specialtyName);
-
     const safe = escapeRegex(cleanedSpecialty);
     const searchPattern = new RegExp(safe, 'i');
-    specialtyQuery.matches("nameEn", searchPattern);
-    const specialties = await specialtyQuery.find({ sessionToken: user.getSessionToken() });
+    const specSearchQuery = new Parse.Query(Specialties).matches("nameEn", searchPattern);
+    specSearchQuery.notEqualTo("isDeleted", true);
+    const specialties = await specSearchQuery.find({ sessionToken: user.getSessionToken() });
 
     if (specialties.length > 0) {
       const specialtyIds = specialties.map(s => s.id);
@@ -718,14 +969,11 @@ async function executeRelationshipQuery(params, user) {
       const hospitalPattern = new RegExp(safeName, 'i');
 
       // Search in BOTH nameEn and nameAr
-      const hospitalQueryEn = new Parse.Query(Hospitals);
-      hospitalQueryEn.matches("nameEn", hospitalPattern);
-
-      const hospitalQueryAr = new Parse.Query(Hospitals);
-      hospitalQueryAr.matches("nameAr", hospitalPattern);
-
-      const hospitalQuery = Parse.Query.or(hospitalQueryEn, hospitalQueryAr);
-      const hospitals = await hospitalQuery.find({ sessionToken: user.getSessionToken() });
+      const hospitalQueryEn = new Parse.Query(Hospitals).matches("nameEn", hospitalPattern);
+      const hospitalQueryAr = new Parse.Query(Hospitals).matches("nameAr", hospitalPattern);
+      const hospitalSearchQuery = Parse.Query.or(hospitalQueryEn, hospitalQueryAr);
+      hospitalSearchQuery.notEqualTo("isDeleted", true);
+      const hospitals = await hospitalSearchQuery.find({ sessionToken: user.getSessionToken() });
 
       if (hospitals.length > 0) {
         const hospitalUids = hospitals.map(h => h.get("uid"));
@@ -743,13 +991,10 @@ async function executeRelationshipQuery(params, user) {
     const searchPattern = new RegExp(safe, 'i');
 
     // Search in BOTH nameEn and nameAr
-    const hospitalQueryEn = new Parse.Query(Hospitals);
-    hospitalQueryEn.matches("nameEn", searchPattern);
-
-    const hospitalQueryAr = new Parse.Query(Hospitals);
-    hospitalQueryAr.matches("nameAr", searchPattern);
-
+    const hospitalQueryEn = new Parse.Query(Hospitals).matches("nameEn", searchPattern);
+    const hospitalQueryAr = new Parse.Query(Hospitals).matches("nameAr", searchPattern);
     const hospitalQuery = Parse.Query.or(hospitalQueryEn, hospitalQueryAr);
+    hospitalQuery.notEqualTo("isDeleted", true);
     const hospitals = await hospitalQuery.find({ sessionToken: user.getSessionToken() });
 
     if (hospitals.length > 0) {
@@ -767,8 +1012,9 @@ async function executeRelationshipQuery(params, user) {
 
     const safe = escapeRegex(cleanedDoctor);
     const searchPattern = new RegExp(safe, 'i');
-    doctorQuery.matches("fullname", searchPattern);
-    const doctors = await doctorQuery.find({ sessionToken: user.getSessionToken() });
+    const docQuery = new Parse.Query(Doctors).matches("fullname", searchPattern);
+    docQuery.notEqualTo("isDeleted", true);
+    const doctors = await docQuery.find({ sessionToken: user.getSessionToken() });
 
     if (doctors.length > 0) {
       const doctorUids = doctors.map(d => d.get("uid"));
@@ -781,18 +1027,14 @@ async function executeRelationshipQuery(params, user) {
     const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
 
     // Find Doctor 1
-    const doctor1Query = new Parse.Query(Doctors);
-    const cleaned1 = cleanSearchTerm(params.doctor1Name);
-    const safe1 = escapeRegex(cleaned1);
-    doctor1Query.matches("fullname", new RegExp(safe1, 'i'));
-    const doctors1 = await doctor1Query.find({ sessionToken: user.getSessionToken() });
+    const d1Query = new Parse.Query(Doctors).matches("fullname", new RegExp(safe1, 'i'));
+    d1Query.notEqualTo("isDeleted", true);
+    const doctors1 = await d1Query.find({ sessionToken: user.getSessionToken() });
 
     // Find Doctor 2
-    const doctor2Query = new Parse.Query(Doctors);
-    const cleaned2 = cleanSearchTerm(params.doctor2Name);
-    const safe2 = escapeRegex(cleaned2);
-    doctor2Query.matches("fullname", new RegExp(safe2, 'i'));
-    const doctors2 = await doctor2Query.find({ sessionToken: user.getSessionToken() });
+    const d2Query = new Parse.Query(Doctors).matches("fullname", new RegExp(safe2, 'i'));
+    d2Query.notEqualTo("isDeleted", true);
+    const doctors2 = await d2Query.find({ sessionToken: user.getSessionToken() });
 
     if (doctors1.length === 0 && doctors2.length === 0) return [];
 
@@ -872,14 +1114,76 @@ async function ensureOpenSearchIndex(indexName) {
     await clientOS.indices.create({
       index: indexName,
       body: {
-        settings: { number_of_shards: 1, number_of_replicas: 0 },
+        settings: {
+          index: {
+            max_ngram_diff: 10
+          },
+          number_of_shards: 1,
+          number_of_replicas: 0,
+          analysis: {
+            char_filter: {
+              arabic_char_normalizer: {
+                type: "mapping",
+                mappings: [
+                  "أ=>ا",
+                  "إ=>ا",
+                  "آ=>ا",
+                  "ة=>ه",
+                  "ى=>ي"
+                ]
+              }
+            },
+            tokenizer: {
+              arabic_ngram_tokenizer: {
+                type: "ngram",
+                min_gram: 3,
+                max_gram: 5,
+                token_chars: ["letter"]
+              }
+            },
+            analyzer: {
+              ar_index_analyzer: {
+                type: "custom",
+                char_filter: ["arabic_char_normalizer"],
+                tokenizer: "arabic_ngram_tokenizer",
+                filter: ["lowercase", "arabic_normalization"]
+              },
+              ar_search_analyzer: {
+                type: "custom",
+                char_filter: ["arabic_char_normalizer"],
+                tokenizer: "standard",
+                filter: ["lowercase", "arabic_normalization"]
+              }
+            }
+          }
+        },
         mappings: {
           properties: {
-            text: { type: "text", analyzer: "standard" },
-            nameEn: { type: "text", analyzer: "standard" },
-            nameAr: { type: "text", analyzer: "standard" },
-            title: { type: "text", analyzer: "standard" },
-            hospitalType: { type: "keyword" }
+            text: {
+              type: "text",
+              analyzer: "ar_index_analyzer",
+              search_analyzer: "ar_search_analyzer"
+            },
+            nameAr: {
+              type: "text",
+              analyzer: "ar_index_analyzer",
+              search_analyzer: "ar_search_analyzer"
+            },
+            nameEn: {
+              type: "text",
+              analyzer: "standard"
+            },
+            title: {
+              type: "text",
+              analyzer: "ar_index_analyzer",
+              search_analyzer: "ar_search_analyzer"
+            },
+            hospitalType: {
+              type: "keyword"
+            },
+            isDeleted: {
+              type: "boolean"
+            }
           }
         }
       }
@@ -895,9 +1199,7 @@ async function ingestHospitalsToQdrant(user) {
   // Qdrant Init
   try { await qdrant.deleteCollection(HOSPITALS_COLLECTION); } catch (e) { }
   try {
-    await qdrant.createCollection(HOSPITALS_COLLECTION, {
-      vectors: { size: 4096, distance: "Cosine" },
-    });
+    await qdrant.createCollection(HOSPITALS_COLLECTION, { vectors: { size: 1024, distance: "Cosine" } });
   } catch (e) { console.error("Error creating Qdrant collection:", e); }
 
   // OpenSearch Init
@@ -905,6 +1207,7 @@ async function ingestHospitalsToQdrant(user) {
 
   const Hospitals = Parse.Object.extend(PARSE_CLASS_HOSPITALS);
   const query = new Parse.Query(Hospitals);
+  query.notEqualTo("isDeleted", true);
   query.limit(1000);
   const results = await query.find({ sessionToken: user.getSessionToken() });
 
@@ -925,7 +1228,7 @@ Description (Ar): ${fixEncoding(obj.get("descAr") || "") || "Unknown"}
 Working Hours: ${obj.get("workingDaysHrs") || "Unknown"}
     `.trim();
 
-    const embedding = await embed(text);
+    const embedding = await embed(text, "retrieval.passage");
 
     // Qdrant Point
     points.push({
@@ -939,7 +1242,8 @@ Working Hours: ${obj.get("workingDaysHrs") || "Unknown"}
         address: obj.get("addressEn"),
         address_Ar: fixEncoding(obj.get("addressAr") || ""),
         Description: obj.get("descEn"),
-        Description_Ar: fixEncoding(obj.get("descAr") || "")
+        Description_Ar: fixEncoding(obj.get("descAr") || ""),
+        isDeleted: false
       }
     });
 
@@ -951,7 +1255,8 @@ Working Hours: ${obj.get("workingDaysHrs") || "Unknown"}
       nameAr: fixEncoding(obj.get("nameAr") || ""),
       type_Hospital: obj.get("hospitalType"),
       address: obj.get("addressEn"),
-      descEn: obj.get("descEn")
+      descEn: obj.get("descEn"),
+      isDeleted: false
     });
 
     process.stdout.write(".");
@@ -975,7 +1280,7 @@ async function ingestDoctorsToQdrant(user) {
   console.log("Recreating collection:", DOCTORS_COLLECTION);
   try { await qdrant.deleteCollection(DOCTORS_COLLECTION); } catch (e) { }
   try {
-    await qdrant.createCollection(DOCTORS_COLLECTION, { vectors: { size: 4096, distance: "Cosine" } });
+    await qdrant.createCollection(DOCTORS_COLLECTION, { vectors: { size: 1024, distance: "Cosine" } });
   } catch (e) { console.error("Error creating collection:", e); }
 
   // OpenSearch Init
@@ -983,6 +1288,7 @@ async function ingestDoctorsToQdrant(user) {
 
   const Doctors = Parse.Object.extend(PARSE_CLASS_DOCTORS);
   const query = new Parse.Query(Doctors);
+  query.notEqualTo("isDeleted", true);
   query.limit(1000);
   const results = await query.find({ sessionToken: user.getSessionToken() });
 
@@ -1005,7 +1311,7 @@ Gender: ${obj.get("gender") || "Unknown"}
 Rating: ${obj.get("averageRating") || "Unknown"}
     `.trim();
 
-    const embedding = await embed(text);
+    const embedding = await embed(text, "retrieval.passage");
     // Qdrant Point
     points.push({
       id: randomUUID(),
@@ -1013,7 +1319,8 @@ Rating: ${obj.get("averageRating") || "Unknown"}
       payload: {
         parse_id: obj.id,
         text: text,
-        type: "DOCTOR"
+        type: "DOCTOR",
+        isDeleted: false
       }
     });
 
@@ -1028,7 +1335,8 @@ Rating: ${obj.get("averageRating") || "Unknown"}
       qualificationsEn: obj.get("qualificationsEn"),
       // Map main name fields for standardized search
       nameEn: obj.get("fullname"),
-      nameAr: fixEncoding(obj.get("fullnameAr") || "")
+      nameAr: fixEncoding(obj.get("fullnameAr") || ""),
+      isDeleted: false
     });
 
     process.stdout.write(".");
@@ -1051,7 +1359,7 @@ async function ingestSpecialtiesToQdrant(user) {
   console.log("Recreating collection:", SPECIALTIES_COLLECTION);
   try { await qdrant.deleteCollection(SPECIALTIES_COLLECTION); } catch (e) { }
   try {
-    await qdrant.createCollection(SPECIALTIES_COLLECTION, { vectors: { size: 4096, distance: "Cosine" } });
+    await qdrant.createCollection(SPECIALTIES_COLLECTION, { vectors: { size: 1024, distance: "Cosine" } });
   } catch (e) { console.error("Error creating collection:", e); }
 
   // OpenSearch Init
@@ -1059,6 +1367,7 @@ async function ingestSpecialtiesToQdrant(user) {
 
   const Specialties = Parse.Object.extend(PARSE_CLASS_SPECIALTIES);
   const query = new Parse.Query(Specialties);
+  query.notEqualTo("isDeleted", true);
   query.limit(1000);
   const results = await query.find({ sessionToken: user.getSessionToken() });
 
@@ -1073,7 +1382,7 @@ ${obj.get("nameEn") || "Unknown"}
 ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
     `.trim();
 
-    const embedding = await embed(text);
+    const embedding = await embed(text, "retrieval.passage");
     // Qdrant Point
     points.push({
       id: randomUUID(),
@@ -1081,7 +1390,8 @@ ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
       payload: {
         parse_id: obj.id,
         text: text,
-        type: "SPECIALTY"
+        type: "SPECIALTY",
+        isDeleted: false
       }
     });
 
@@ -1090,7 +1400,8 @@ ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
     osDocs.push({
       text: text,
       nameEn: obj.get("nameEn"),
-      nameAr: fixEncoding(obj.get("nameAr") || "")
+      nameAr: fixEncoding(obj.get("nameAr") || ""),
+      isDeleted: false
     });
 
     process.stdout.write(".");
@@ -1109,6 +1420,143 @@ ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
   console.log("Done ingesting specialties.");
 }
 
+async function ingestCitiesToQdrant(user) {
+  console.log("Recreating collection:", CITIES_COLLECTION);
+  try { await qdrant.deleteCollection(CITIES_COLLECTION); } catch (e) { }
+  try {
+    await qdrant.createCollection(CITIES_COLLECTION, { vectors: { size: 1024, distance: "Cosine" } });
+  } catch (e) { console.error("Error creating collection:", e); }
+
+  await ensureOpenSearchIndex(CITIES_COLLECTION);
+
+  const Cities = Parse.Object.extend(PARSE_CLASS_CITIES);
+  const query = new Parse.Query(Cities);
+  query.notEqualTo("isDeleted", true);
+  query.limit(1000);
+  const results = await query.find({ sessionToken: user.getSessionToken() });
+
+  console.log(`Found ${results.length} cities to ingest...`);
+
+  const points = [];
+  const osDocs = [];
+
+  for (const obj of results) {
+    const text = `
+City: ${obj.get("nameEn") || "Unknown"}
+City (Ar): ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
+    `.trim();
+
+    const embedding = await embed(text, "retrieval.passage");
+    points.push({
+      id: randomUUID(),
+      vector: embedding,
+      payload: {
+        parse_id: obj.id,
+        text: text,
+        type: "CITY",
+        isDeleted: false
+      }
+    });
+
+    osDocs.push({ index: { _index: CITIES_COLLECTION, _id: obj.id } });
+    osDocs.push({
+      text: text,
+      nameEn: obj.get("nameEn"),
+      nameAr: fixEncoding(obj.get("nameAr") || ""),
+      isDeleted: false
+    });
+
+    process.stdout.write(".");
+  }
+  console.log("\nUpserting cities...");
+  if (points.length > 0) {
+    await qdrant.upsert(CITIES_COLLECTION, { points });
+    try {
+      const { body: bulkResponse } = await clientOS.bulk({ refresh: true, body: osDocs });
+      if (bulkResponse.errors) console.log("⚠️ OpenSearch Bulk had errors");
+      else console.log(`✅ Indexed ${points.length} docs to OpenSearch`);
+    } catch (e) {
+      console.error("❌ OpenSearch Bulk Failed:", e.message);
+    }
+  }
+  console.log("Done ingesting cities.");
+}
+
+async function ingestAreasToQdrant(user) {
+  console.log("Recreating collection:", AREAS_COLLECTION);
+  try { await qdrant.deleteCollection(AREAS_COLLECTION); } catch (e) { }
+  try {
+    await qdrant.createCollection(AREAS_COLLECTION, { vectors: { size: 1024, distance: "Cosine" } });
+  } catch (e) { console.error("Error creating collection:", e); }
+
+  await ensureOpenSearchIndex(AREAS_COLLECTION);
+
+  const Areas = Parse.Object.extend(PARSE_CLASS_AREAS);
+  const query = new Parse.Query(Areas);
+  query.notEqualTo("isDeleted", true);
+  query.limit(1000);
+  const results = await query.find({ sessionToken: user.getSessionToken() });
+
+  console.log(`Found ${results.length} areas to ingest...`);
+
+  const points = [];
+  const osDocs = [];
+
+  for (const obj of results) {
+    let text = "";
+    if (obj.get("nameEn") === "Misr Gadeda") {
+
+      text = `
+Area: ${obj.get("nameEn") || "Unknown"} "Heliopolis"
+Area (Ar): ${fixEncoding(obj.get("nameAr") || "هيليوبليس") || "Unknown"}
+City ID: ${obj.get("cityId") || "Unknown"}
+    `.trim();
+
+    } else {
+      text = `
+Area: ${obj.get("nameEn") || "Unknown"}
+Area (Ar): ${fixEncoding(obj.get("nameAr") || "") || "Unknown"}
+City ID: ${obj.get("cityId") || "Unknown"}
+    `.trim();
+    }
+    const embedding = await embed(text, "retrieval.passage");
+    points.push({
+      id: randomUUID(),
+      vector: embedding,
+      payload: {
+        parse_id: obj.id,
+        text: text,
+        type: "AREA",
+        cityId: obj.get("cityId"),
+        isDeleted: false
+      }
+    });
+
+    osDocs.push({ index: { _index: AREAS_COLLECTION, _id: obj.id } });
+    osDocs.push({
+      text: text,
+      nameEn: obj.get("nameEn"),
+      nameAr: fixEncoding(obj.get("nameAr") || ""),
+      cityId: obj.get("cityId"),
+      isDeleted: false
+    });
+
+    process.stdout.write(".");
+  }
+  console.log("\nUpserting areas...");
+  if (points.length > 0) {
+    await qdrant.upsert(AREAS_COLLECTION, { points });
+    try {
+      const { body: bulkResponse } = await clientOS.bulk({ refresh: true, body: osDocs });
+      if (bulkResponse.errors) console.log("⚠️ OpenSearch Bulk had errors");
+      else console.log(`✅ Indexed ${points.length} docs to OpenSearch`);
+    } catch (e) {
+      console.error("❌ OpenSearch Bulk Failed:", e.message);
+    }
+  }
+  console.log("Done ingesting areas.");
+}
+
 // -----------------------------------------
 // IMPROVED VECTOR SEARCH
 // -----------------------------------------
@@ -1119,26 +1567,23 @@ function hybridMerge(bm25Results, vectorResults) {
 
   // Process BM25 Results (OpenSearch)
   bm25Results.forEach(r => {
-    // Normalizing max score could be better, but using raw score * 0.6 as per request
     const score = (r._score || 0) * 0.6;
-    map.set(r._id, { ...r._source, score, matchType: ['bm25'] });
+    map.set(r._id, { ...r._source, score, matchType: ['bm25'], collectionName });
   });
 
   // Process Vector Results (Qdrant)
   vectorResults.forEach(r => {
-    // FIX: Use parse_id to match OpenSearch _id
-    const id = r.payload?.parse_id || r.payload?.mongoId || r.id;
-
-    // Qdrant scores are usually Cosine (0-1), OpenSearch scores are unbounded BM25.
-    // We might need to normalize Qdrant score to scale. Let's assume simple weight for now.
+    const id = r.payload?.mongoId || r.id; // Ensure ID alignment
     const score = (r.score || 0) * 0.4;
 
     if (map.has(id)) {
       const entry = map.get(id);
       entry.score += score;
+      entry.score *= 1.5; // Boost intersection
       entry.matchType.push('vector');
+      if (collectionName) entry.collectionName = collectionName;
     } else {
-      map.set(id, { ...r.payload, score, matchType: ['vector'] });
+      map.set(id, { ...r.payload, score, matchType: ['vector'], collectionName });
     }
   });
 
@@ -1156,7 +1601,7 @@ async function performVectorSearch(query, collection, limit = 5, scoreThreshold 
   const searchLimit = limit * 2; // Fetch more for better intersection
 
   // 1. Generate Vector
-  const vectorPromise = embed(query);
+  const vectorPromise = embed(query, "retrieval.query");
 
   // 2. Parallel Search Execution
   try {
@@ -1167,10 +1612,19 @@ async function performVectorSearch(query, collection, limit = 5, scoreThreshold 
         body: {
           size: searchLimit,
           query: {
-            multi_match: {
-              query: normalizedQuery,
-              fields: ['text^2', 'nameAr', 'nameEn', 'title'], // Search across relevant text fields
-              fuzziness: "AUTO"
+            bool: {
+              must: [
+                {
+                  multi_match: {
+                    query: normalizedQuery,
+                    fields: ['text^2', 'nameAr', 'nameEn', 'title'], // Search across relevant text fields
+                    fuzziness: "AUTO"
+                  }
+                }
+              ],
+              must_not: [
+                { term: { isDeleted: true } }
+              ]
             }
           }
         }
@@ -1183,7 +1637,17 @@ async function performVectorSearch(query, collection, limit = 5, scoreThreshold 
     const vectorRes = await qdrant.search(collection, {
       vector: vector,
       limit: searchLimit,
-      score_threshold: scoreThreshold
+      score_threshold: scoreThreshold,
+      filter: {
+        must_not: [
+          {
+            key: "isDeleted",
+            match: {
+              value: true
+            }
+          }
+        ]
+      }
     }).catch(e => {
       console.error("Qdrant Vector Search Failed:", e.message);
       return [];
@@ -1193,7 +1657,7 @@ async function performVectorSearch(query, collection, limit = 5, scoreThreshold 
     console.log(`📊 Raw Results: OpenSearch(BM25)=${bm25Hits.length}, Qdrant(Vector)=${vectorRes.length}`);
 
     // 3. Fusion
-    const fusedResults = hybridMerge(bm25Hits, vectorRes).slice(0, limit);
+    const fusedResults = hybridMerge(bm25Hits, vectorRes, collection).slice(0, limit);
 
     console.log(`🤝 Hybrid Fusion yielded ${fusedResults.length} unique results.`);
     fusedResults.forEach((r, i) => {
@@ -1211,12 +1675,27 @@ async function performVectorSearch(query, collection, limit = 5, scoreThreshold 
 async function extractEntityFromContext(question, contextChunks) {
   if (!contextChunks || contextChunks.length === 0) return null;
 
-  const context = contextChunks.slice(0, 3).join("\n");
+  const context = contextChunks.slice(0, 3).map(chunk => {
+    if (typeof chunk === 'string') return chunk;
+    const text = chunk.text || chunk.nameAr || chunk.nameEn || "";
+    const source = chunk.collectionName || "Unknown";
+    return `[Source: ${source}] ${text}`;
+  }).join("\n");
 
   const prompt = `
 You are an intelligent assistant. The user asked a question, and we found some text snippets.
 Analyze the snippets to see if they refer to a SPECIFIC Hospital, Doctor, or Specialty that matches the user's intent.
-If yes, extract the name to query the database for structured details (like address, phone, rating).
+
+CRITICAL INSTRUCTION (ZERO HALLUCINATION):
+1. EXTRACT DATA ONLY FROM THE "TEXT SNIPPETS" PROVIDED BELOW.
+2. DO NOT USE OUTSIDE KNOWLEDGE.
+3. DO NOT INVENT OR HALLUCINATE NAMES.
+4. If the entity is NOT in the text snippets, set "found": false.
+
+SOURCE INFERENCE RULES:
+- If a snippet starts with "[Source: hospitals_docs]", it refers to a HOSPITAL.
+- If a snippet starts with "[Source: specialties_docs]", it refers to a SPECIALTY.
+- If a snippet starts with "[Source: doctors_docs]", it refers to a DOCTOR.
 
 User Question: "${question}"
 
@@ -1268,6 +1747,12 @@ async function ragAnswer(question, user) {
   } else if (entity === "RELATIONSHIPS") {
     parseQueryFn = executeRelationshipQuery;
     collection = HOSPITALS_COLLECTION; // Default to hospitals for vector search in relationships
+  } else if (entity === "CITIES") {
+    collection = CITIES_COLLECTION;
+    parseQueryFn = executeCityParseQuery;
+  } else if (entity === "AREAS") {
+    collection = AREAS_COLLECTION;
+    parseQueryFn = executeAreaParseQuery;
   } else {
     collection = HOSPITALS_COLLECTION;
     parseQueryFn = executeHospitalParseQuery;
@@ -1336,6 +1821,8 @@ async function ragAnswer(question, user) {
       if (extraction.entity === "HOSPITALS") enrichFn = executeHospitalParseQuery;
       else if (extraction.entity === "DOCTORS") enrichFn = executeDoctorParseQuery;
       else if (extraction.entity === "SPECIALTIES") enrichFn = executeSpecialtiesParseQuery;
+      else if (extraction.entity === "CITIES") enrichFn = executeCityParseQuery;
+      else if (extraction.entity === "AREAS") enrichFn = executeAreaParseQuery;
 
       if (enrichFn) {
         const enrichResults = await enrichFn(extraction.params, user);
@@ -1354,26 +1841,20 @@ async function ragAnswer(question, user) {
 
   // Improved prompt with better instructions
   const prompt = `
-You are a helpful medical information assistant. Answer the user's question using ONLY the context provided below.
+You are a helpful medical and location information assistant. Answer the user's question using ONLY the context provided below.
 
 IMPORTANT RULES:
 1. Base your answer ONLY on the information in the context
 2. If the context doesn't contain the answer, say: "I don't have that information in my database."
 3. Be specific and cite details from the context
-4. CRITICAL: List ALL items from the context - DO NOT skip, summarize, or truncate any results. If there are 6 doctors, list all 6.
+4. CRITICAL: List ALL items from the context (Doctors, Hospitals, Cities, Areas) - DO NOT skip, summarize, or truncate any results.
 5. LANGUAGE RULES:
    - If the user's question is in Arabic, respond in Arabic
-   - For Arabic responses: Use ONLY the Arabic field value (e.g., "Doctor (Ar)" value), not both languages
-   - DO NOT show both names like "Name (English Name)" - just use one language
+   - For Arabic responses: Use ONLY the Arabic field value, not both languages
    - DO NOT translate - use exact text from context
-   - If Arabic field is empty, use the English field
 6. FORMATTING RULES:
    - Be concise and clean
-   - STRICTLY FORBIDDEN: "Name (Name)" format. NEVER put a name in parentheses if it's the same as the first one.
-   - STRICTLY FORBIDDEN: Repeating the name. Output it ONCE.
-   - If you have "Doctor (Ar)", use ONLY that value. Ignore "Doctor" (English).
-   - List items simply: "- [Name] - [Specialty] - [Hospital]"
-   - Example: "- د. احمد صلاح - علاج العقم - مستشفى الحياة"
+   - List items simply: "- [Name] - [Info]"
 7. Forbidden: hallucinations, external knowledge, translating, or repeating content
 
 CONTEXT:
@@ -1406,6 +1887,8 @@ async function main() {
   await ingestHospitalsToQdrant(user);
   await ingestDoctorsToQdrant(user);
   await ingestSpecialtiesToQdrant(user);
+  await ingestCitiesToQdrant(user);
+  await ingestAreasToQdrant(user);
   console.log("[Ingestion] Skipping data ingestion (already done).\n");
 
   console.log("\nBot is ready! Ask anything (type 'exit' to quit):\n");

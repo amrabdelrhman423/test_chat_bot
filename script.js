@@ -12,7 +12,10 @@ function connect() {
     status.textContent = 'Connecting...';
     status.className = 'status connecting';
 
-    ws = new WebSocket('ws://localhost:3000');
+    // Connect to the same host that served this file
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host || 'localhost:3000';
+    ws = new WebSocket(`${protocol}//${host}`);
 
     ws.onopen = () => {
         console.log('Connected to server');

@@ -1,4 +1,4 @@
-# Environment variables
+﻿# Environment variables
 .env
 
 # Dependencies
@@ -17,3 +17,12 @@ yarn-error.log*
 # System
 Thumbs.db
 .DS_Store
+
+# Models & Binary data
+jina-v3-local/
+jina-v3.gguf
+*.safetensors
+*.bin
+*.gguf
+__pycache__/
+*.incomplete
