@@ -38,7 +38,7 @@ export async function embed(text, task = "retrieval.query") {
     // 2. Try Hugging Face API Fallback
     try {
         const HF_TOKEN = process.env.HF_TOKEN;
-        const MODEL_ID = "jinaai/jina-embeddings-v3";
+        const MODEL_ID = process.env.EMBED_MODEL || "jinaai/jina-embeddings-v3";
 
         if (HF_TOKEN) {
             console.log(`🔍 Generating Jina v3 embedding via HF API for: "${text.substring(0, 30)}..."`);
